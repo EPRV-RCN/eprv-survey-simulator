@@ -1,11 +1,6 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Nov  4 23:59:05 2025
+# simpler pipeline (can only select 1 instrument at a time for now)
 
-@author: shire
-"""
-
-# imports
+# IMPORTS
 import csv
 import calendar
 import random
@@ -34,26 +29,61 @@ from stellar_gp.stellar_scalings import get_stellar_hypers, calc_Pg
 
 
 
-# USER INPUT / CONFIGURATION 
 
-# optionally provide 'teff', 'vmag', 'vsini', 'dec' (if not provided -> SIMBAD -> HWO CSV)
-user_stars_input = [ {'name': 'HD 166'},
- # e.g. {'name': 'HD ', 'vmag':, 'vsini':},
+# USER INPUT / CONFIGURATION MODULE
+
+selected_instrument = "KPF"  # input: "NEID" or "KPF"
+
+# input stars with optional parameters
+user_stars_input = [ 
+    {'name': 'HD 166'},
+    # more stars can be added in the same format:
+    # {'name': 'HD 123', 'teff': 5800, 'vmag': 6.5, 'vsini': 2.1, 'dec': 45.2},
+    # {'name': 'HD 456', 'vmag': 7.2},
 ]
 
-# File paths 
-hwo_file = r"C:/Users/shire/Downloads/DI_STARS_EXEP_2025.06.20_11.46.50.csv"
-weather_file = r"C:\Users\shire\Downloads\KPNO.txt"
-output_timestamps_file = r"C:\Users\shire\Downloads\JUST TIMESTAMPS.txt"
-path_to_grid = r"C:\Users\shire\Downloads\neid etc"
+# input file paths 
+hwo_file = ""  # path to HWO CSV file 
+weather_file = ""  # path to weather file 
+output_timestamps_file = ""  # path for output file for timestamps
+instrument_etc_path = ""  # path to instrument ETC
 
-# SCHEDULING OPTIONS (set only one)
-cadence_days = None # None = use even_spread_flag
-even_spread_flag = True # True = spread observations evenly
+# default paths (temporary functions)
+if not hwo_file:
+    hwo_file = r"C:/Users/shire/Downloads/DI_STARS_EXEP_2025.06.20_11.46.50.csv"
+
+if not weather_file or not output_timestamps_file or not instrument_etc_path:
+    if selected_instrument == "NEID":
+        if not weather_file:
+            weather_file = r"C:\Users\shire\Downloads\KPNO.txt"
+        if not output_timestamps_file:
+            output_timestamps_file = r"C:\Users\shire\Downloads\JUST_TIMESTAMPS.txt"
+        if not instrument_etc_path:
+            instrument_etc_path = r"C:\Users\shire\Downloads\neid etc"
+    elif selected_instrument == "KPF":
+        if not weather_file:
+            weather_file = r"C:\Users\shire\Downloads\MaunaKea.txt"
+        if not output_timestamps_file:
+            output_timestamps_file = r"C:\Users\shire\Downloads\JUST_TIMESTAMPS.txt"
+        if not instrument_etc_path:
+            instrument_etc_path = r"C:\Users\shire\Downloads\KPF-etc-master"
+
+# scheduling parameters (if neither is selected: random selection)
+cadence_days = None      # input: None or number of days // will rule over even_spread_flag
+even_spread_flag = True  # input: True or False 
+
+# time parameters
+start_year = 2025  # input: starting yr for scheduling
+num_years = 1  # input: no. of yrs to schedule
+target_nights_for_uniformity = 20  # input: target nights for uniformity calculation
+hours_per_night = 10  # input: available observing hrs/night
+
+
 
 
 
 # ASTROQUERY FUNCTIONS
+
 def get_ra_dec(name):
     simbad = Simbad()
     result = simbad.query_object(name)
@@ -228,6 +258,9 @@ def get_teff(name):
         return None
     latest = max(rows, key=lambda x: x[0])
     return latest[1]
+
+
+
 
 # DATA PROCESSING FUNCTIONS
 def query_star_data_astroquery(star_name):
@@ -417,7 +450,9 @@ def get_star_profile(star_input, hwo_fallback_data):
 
 
 
+
 # SCHEDULING FUNCTIONS 
+
 def observable_window(
     star_name=None,
     ra=None,
@@ -569,6 +604,7 @@ def generate_observation_timestamps(
 
 
 
+
 # GENERAL SCHEDULING FUNCTIONS 
 def calculate_exposures_and_uniform_visits(stars_to_process, teff_dict, vmag_dict, vsini_dict,
                                           exposure_time_calculator,
@@ -681,7 +717,7 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
     star_observations = {hd: [] for hd in selected_stars}
     observations_count = {hd: 0 for hd in selected_stars}
 
-    print("\nGenerating visibility windows and observations for each target on potential observing nights:")
+    #print("\nGenerating visibility windows and observations for each target on potential observing nights:")
     
     processed_nights_count = 0
     
@@ -748,7 +784,7 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
                 star_observations[hd].append(night_start + TimeDelta(random.uniform(0, actual_night_end.mjd - night_start.mjd) * u.day))
                 observations_count[hd] += 1
 
-    print("\n Summary of Simulated Observations:")
+    #print("\n Summary of Simulated Observations:")
     total_simulated_observations = 0
     for hd, obs_list in star_observations.items():
         print(f"HD {hd}: {len(obs_list)} observations")
@@ -763,7 +799,9 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
 
 
 
+
 # VISUALIZATION FUNCTIONS
+
 def plot_observations_over_year(simulated_observations_data):
     """
     Plots all generated observation timestamps as a scatter plot.
@@ -806,8 +844,8 @@ def plot_observations_over_year(simulated_observations_data):
 
 
 
-# NEID INSTRUMENT MODULE
 
+# NEID INSTRUMENT MODULE
 
 def apply_neid_vsini_condition(vsini_value):
     """Apply NEID condition: minimum vsini of 1.0 km/s"""
@@ -822,9 +860,9 @@ def vsini_scaling(vsini=2.0):
 
 def NEID_exptime_RV(teff, vmag, rv_precision, seeing=0.8, vsini=2.0, use_order=False, order=0):
     """NEID-specific exposure time calculation"""
-    exptime_grid = fits.open(os.path.join(path_to_grid,'photon_grid_exptime.fits'))[0].data
-    teff_grid = fits.open(os.path.join(path_to_grid,'photon_grid_teff.fits'))[0].data
-    vmag_grid = fits.open(os.path.join(path_to_grid,'photon_grid_vmag.fits'))[0].data
+    exptime_grid = fits.open(os.path.join(instrument_etc_path,'photon_grid_exptime.fits'))[0].data
+    teff_grid = fits.open(os.path.join(instrument_etc_path,'photon_grid_teff.fits'))[0].data
+    vmag_grid = fits.open(os.path.join(instrument_etc_path,'photon_grid_vmag.fits'))[0].data
     seeing_grid=np.array([0.3,0.5,0.7,0.8,0.9,1.1,1.3,1.5,1.7,1.9])
     logexp=np.log10(exptime_grid)
 
@@ -842,17 +880,17 @@ def NEID_exptime_RV(teff, vmag, rv_precision, seeing=0.8, vsini=2.0, use_order=F
         return np.nan
 
     if use_order==True:
-        order_grid = fits.open(os.path.join(path_to_grid,'order_wvl_centers.fits'))[0].data[0]
+        order_grid = fits.open(os.path.join(instrument_etc_path,'order_wvl_centers.fits'))[0].data[0]
         order_loc=np.where(order_grid==order)[0][0]
         rvprec_grid=[]
         for s in seeing_grid:
-            rvprec_grid_order = fits.open(os.path.join(path_to_grid,'dv_uncertainty_master_order_seeing','dv_uncertainty_master_order_'+str(s)+'.fits'))[0].data
+            rvprec_grid_order = fits.open(os.path.join(instrument_etc_path,'dv_uncertainty_master_order_seeing','dv_uncertainty_master_order_'+str(s)+'.fits'))[0].data
             grid_s=rvprec_grid_order[order_loc]
             rvprec_grid.append(grid_s)
     else:
         rvprec_grid=[]
         for s in seeing_grid:
-            grid_s=fits.open(os.path.join(path_to_grid,'dv_uncertainty_master_seeing','dv_uncertainty_master_'+str(s)+'.fits'))[0].data
+            grid_s=fits.open(os.path.join(instrument_etc_path,'dv_uncertainty_master_seeing','dv_uncertainty_master_'+str(s)+'.fits'))[0].data
             rvprec_grid.append(grid_s)
         rvprec_grid=np.array(rvprec_grid)
 
@@ -883,14 +921,140 @@ def neid_exposure_time_calculator(teff, vmag, vsini):
 
 
 
-# MAIN EXECUTION (running with neid for now)
 
+# KPF INSTRUMENT MODULE
+
+def kpf_exposure_time_calculator(teff, vmag, vsini):
+    """Wrapper function for KPF exposure time calculation"""
+    return kpf_etc_rv(teff, vmag, 0.5)
+
+def kpf_etc_rv(teff, vmag, sigma_rv):
+    '''
+    Estimates the exposure time required to reach a specified RV uncertainty
+    value (sigma_rv) for a given stellar target. The target is defined by the
+    stellar effective temperature (teff) and V magnitude (vmag)
+
+    This function interpolates over a pre-computed grid of RV uncertainty values
+    to estimate the optimum exposure length. This is done by looping through
+    'trial' exposure time guesses to see which yields sigma_rv closest to the
+    desired value.
+
+    Parameters
+    ----------
+    teff : :obj:`float`
+        Target effective temperature
+
+    vmag : :obj:`float`
+        Target V magnitude
+
+    sigma_rv : :obj:`float`
+        Desired integrated RV uncertainty (photons only)
+
+    Returns
+    -------
+    exptime : :obj:`float`
+        Estimated exposure time for reaching specified sigma_rv
+
+    S Halverson - JPL - 29-Oct-2020
+    '''
+
+    # Grid files for teff, vmag, exp_time
+    teff_grid_file = os.path.join(instrument_etc_path, 'photon_grid_teff.fits')
+    vmag_grid_file = os.path.join(instrument_etc_path, 'photon_grid_vmag.fits')
+    exp_time_grid_file = os.path.join(instrument_etc_path, 'photon_grid_exptime.fits')
+
+    # Master grid files for interpolation
+    sigma_rv_total_file = os.path.join(instrument_etc_path, 'dv_uncertainty_master.fits')
+
+    # read in data cubes and arrays
+    sigma_rv_grid = fits.getdata(sigma_rv_total_file)
+    teff_grid = fits.getdata(teff_grid_file)
+    vmag_grid = fits.getdata(vmag_grid_file)
+    exptime_grid = fits.getdata(exp_time_grid_file)
+    logexp = np.log10(exptime_grid)
+
+    # check that inputs are within the grid boundaries
+    flag_bound = True
+    if teff < np.min(teff_grid) or teff > np.max(teff_grid):
+        print("Temperature out of bounds (%d K to %d K)" % (np.amin(teff_grid), np.amax(teff_grid)))
+        flag_bound = False
+    if vmag < np.min(vmag_grid) or vmag > np.max(vmag_grid):
+        print("Magnitude out of bounds (V = %d to V = %d)" % (np.amin(vmag_grid), np.amax(vmag_grid)))
+        flag_bound = False
+    if not flag_bound:
+        return np.nan
+
+    # Get fractional indices for relevant input parameters
+    teff_index_spline = InterpolatedUnivariateSpline(teff_grid,
+                                                     np.arange(len(teff_grid),
+                                                               dtype=np.double))
+    teff_location = teff_index_spline(teff)
+
+    vmag_index_spline = InterpolatedUnivariateSpline(vmag_grid,
+                                                     np.arange(len(vmag_grid),
+                                                               dtype=np.double))
+    vmag_location = vmag_index_spline(vmag)
+
+    # dummy criterea variables for loop
+    ind = 2
+    maxout = 1e10
+
+    # while trial exposure time yields worse precision, keep increasing until
+    # you reach specified sigma_rv
+    while maxout > sigma_rv:
+
+        # dummy guess trial exposure
+        trial_exp = min(exptime_grid) + ind
+
+        # fractional index for trial_exp in exptime_grid
+        exptime_index = InterpolatedUnivariateSpline(logexp,
+                                                     np.arange(len(exptime_grid),
+                                                               dtype=np.double))(np.log10(trial_exp))
+
+        # recompute expected sigma_rv based on trial exposure time
+        sigma_rv_interpolator = RegularGridInterpolator((np.arange(len(exptime_grid)),
+                                                         np.arange(len(vmag_grid)),
+                                                         np.arange(len(teff_grid))),
+                                                        sigma_rv_grid)
+
+        inputs = [exptime_index, vmag_location, teff_location]
+
+        # store as new maximum
+        maxout = sigma_rv_interpolator(inputs)[0]
+
+        # increase exposure time by 1 second
+        ind += 1
+
+    # last 'trial' exposure time is correct answer
+    exptime = trial_exp
+
+    return exptime
+
+
+
+
+# MAIN EXECUTION
 
 if __name__ == "__main__":
     if not user_stars_input:
-        print("no stars input")
+        print("No stars input provided by user.")
     else:
         warnings.filterwarnings('ignore') #cleaning output
+
+        # Select instrument-specific exposure time calculator
+        if selected_instrument == "NEID":
+            exposure_time_calculator = neid_exposure_time_calculator
+            observatory_location = 'kitt peak'
+        elif selected_instrument == "KPF":
+            exposure_time_calculator = kpf_exposure_time_calculator
+            observatory_location = 'keck'
+        else:
+            print(f"ERROR: Unknown instrument '{selected_instrument}'. Please choose 'NEID' or 'KPF'.")
+            exit(1)
+
+        print(f"\nUsing {selected_instrument} instrument at {observatory_location} observatory")
+        print(f"Scheduling parameters: Start year={start_year}, Num years={num_years}")
+        print(f"Target nights for uniformity: {target_nights_for_uniformity}, Hours per night: {hours_per_night}")
 
         # loading HWO data for fallback lookup
         hwo_fallback_data = load_hwo_candidates(hwo_file)
@@ -917,12 +1081,12 @@ if __name__ == "__main__":
                     final_teff_dict,
                     final_vmag_dict,
                     final_vsini_dict,
-                    exposure_time_calculator=neid_exposure_time_calculator,  # Pass instrument-specific calculator
-                    target_nights_for_uniformity=20,
-                    hours_per_night=10
+                    exposure_time_calculator=exposure_time_calculator,  # Use selected instrument calculator
+                    target_nights_for_uniformity=target_nights_for_uniformity,
+                    hours_per_night=hours_per_night
                 )
 
-            # Check if we got valid stars back
+            # sanity check
             if not selected_stars:
                 print("ERROR: No valid stars with exposure time calculations.")
                 exit(1)
@@ -932,9 +1096,9 @@ if __name__ == "__main__":
                 exposure_times,
                 final_dec_dict,
                 weather_file,
-                observatory_location='kitt peak',  
-                start_year=2025,
-                num_years=1,
+                observatory_location=observatory_location,  # Use selected observatory
+                start_year=start_year,
+                num_years=num_years,
                 clear_night_threshold=0.6,
                 target_obs_per_star=max_uniform_visits_calculated,
                 cadence_days=cadence_days,
@@ -957,7 +1121,7 @@ if __name__ == "__main__":
             except IOError as e:
                 print(f"Error writing to file {output_timestamps_file}: {e}")
 
-            print("\n Plotting observation timestamps over the year: ")
+            #print("\n Plotting observation timestamps over the year: ")
             plot_observations_over_year(simulated_observations_data)
 
         else:
