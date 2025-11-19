@@ -1,0 +1,165 @@
+<!doctype html>
+<title>{% block title %}{% endblock %} Calculate Exposure Time - NEID Exposure Time Calculator</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style_site.css') }}">
+
+<nav>
+  <h1>NEID Exposure Time Calculator</h1>
+  <ul>
+    <li><a href="{{ url_for('calc_shell.about') }}">About</a>
+    <li><a href="{{ url_for('calc_shell.calculate_rv') }}">RV Precision</a>
+    <li><a href="{{ url_for('calc_shell.calculate_snr') }}">SNR</a>
+    <li><a href="{{ url_for('calc_shell.calculate_exp_rv') }}">Exposure Time (RV)</a>
+    <li><a href="{{ url_for('calc_shell.calculate_exp_snr') }}"><b>[Exposure Time (SNR)]</b></a>
+  </ul>
+</nav>
+
+<section class="content">
+  
+  <header>
+  {% block header %}
+    <p>
+    <i>Proposers to the observing call for NEID should use this calculator to estimate 
+    the exposure times for their observations given a target SNR or RV precision, 
+    and the inverse of those functions. This exposure time calculator was written 
+    by the NEID Science Team and is based on initial best-estimates for the total 
+    system throughput as a function of wavelength, precision from the default data 
+    pipeline, and based on template stellar spectra at vsini = 2 km/s and solar 
+    metallicity. All throughput estimates are deliberately conservative, and there
+    is an additional 30% margin built-in on top of this conservatism.
+    <br /><br />
+    This calculator will be updated as better estimates of system performance 
+    become available, and as on-sky performance is measured.</i>
+    <br /><br />
+    <font size="6"> <b> Calculate Exposure Time </b> </font>  {% endblock %}
+    </p>
+  </header>
+
+  {% block content %}
+    <form method="post">
+      <label for="temperature">Effective Temperature (K):</label>
+      <input type='number' value={{temp}} name="temperature" id="temperature" required min='2700' max='6600' step='1'>
+      <label for="vmag">V-mag:</label>
+      <input type='number' value={{vm}} name="vmag" id="vmag" required min='3.01' max='17' step='0.01'>
+      <label for="snr">Desired SNR: </label>
+      <input type='number' value={{sn}} name="snr" id="snr" required min='1' step='0.01'>
+      <label for="seeing">Seeing ("):</label>
+      <input type='number' value={{see}} name="seeing" id="seeing" required min='0.31' max='1.89' step='0.01'>
+      <label for="wavelength">Central Wavelength (nm):</label>
+      <select name="wavelength">
+        <option type=number value={{wvl}}>{{wvl}}</option>
+        <option value="0"> </option>
+        <option type=number value='383.62'>383.62</option>
+        <option type=number value='386.03'>386.03</option>
+        <option type=number value='388.48'>388.48</option>
+        <option type=number value='390.95'>390.95</option>
+        <option type=number value='393.46'>393.46</option>
+        <option type=number value='396.00'>396.00</option>
+        <option type=number value='398.57'>398.57</option>
+        <option type=number value='401.17'>401.17</option>
+        <option type=number value='403.81'>403.81</option>
+        <option type=number value='406.49'>406.49</option>
+        <option type=number value='409.20'>409.20</option>
+        <option type=number value='411.94'>411.94</option>
+        <option type=number value='414.72'>414.72</option>
+        <option type=number value='417.55'>417.55</option>
+        <option type=number value='420.41'>420.41</option>
+        <option type=number value='423.31'>423.31</option>
+        <option type=number value='426.24'>426.24</option>
+        <option type=number value='429.23'>429.23</option>
+        <option type=number value='432.25'>432.25</option>
+        <option type=number value='435.31'>435.31</option>
+        <option type=number value='438.42'>438.42</option>
+        <option type=number value='441.58'>441.58</option>
+        <option type=number value='444.78'>444.78</option>
+        <option type=number value='448.02'>448.02</option>
+        <option type=number value='451.32'>451.32</option>
+        <option type=number value='454.66'>454.66</option>
+        <option type=number value='458.05'>458.05</option>
+        <option type=number value='461.50'>461.50</option>
+        <option type=number value='464.99'>464.99</option>
+        <option type=number value='468.54'>468.54</option>
+        <option type=number value='472.15'>472.15</option>
+        <option type=number value='475.81'>475.81</option>
+        <option type=number value='479.53'>479.53</option>
+        <option type=number value='483.30'>483.30</option>
+        <option type=number value='487.14'>487.14</option>
+        <option type=number value='491.03'>491.03</option>
+        <option type=number value='494.99'>494.99</option>
+        <option type=number value='499.02'>499.02</option>
+        <option type=number value='503.11'>503.11</option>
+        <option type=number value='507.27'>507.27</option>
+        <option type=number value='511.49'>511.49</option>
+        <option type=number value='515.79'>515.79</option>
+        <option type=number value='520.16'>520.16</option>
+        <option type=number value='524.61'>524.61</option>
+        <option type=number value='529.13'>529.13</option>
+        <option type=number value='533.73'>533.73</option>
+        <option type=number value='538.41'>538.41</option>
+        <option type=number value='543.18'>543.18</option>
+        <option type=number value='548.03'>548.03</option>
+        <option type=number value='552.97'>552.97</option>
+        <option type=number value='557.99'>557.99</option>
+        <option type=number value='563.11'>563.11</option>
+        <option type=number value='568.33'>568.33</option>
+        <option type=number value='573.64'>573.64</option>
+        <option type=number value='579.05'>579.05</option>
+        <option type=number value='584.56'>584.56</option>
+        <option type=number value='590.19'>590.19</option>
+        <option type=number value='595.92'>595.92</option>
+        <option type=number value='601.76'>601.76</option>
+        <option type=number value='607.72'>607.72</option>
+        <option type=number value='613.79'>613.79</option>
+        <option type=number value='619.99'>619.99</option>
+        <option type=number value='626.32'>626.32</option>
+        <option type=number value='632.78'>632.78</option>
+        <option type=number value='639.37'>639.37</option>
+        <option type=number value='646.10'>646.10</option>
+        <option type=number value='652.97'>652.97</option>
+        <option type=number value='659.99'>659.99</option>
+        <option type=number value='667.17'>667.17</option>
+        <option type=number value='674.50'>674.50</option>
+        <option type=number value='681.99'>681.99</option>
+        <option type=number value='689.65'>689.65</option>
+        <option type=number value='697.49'>697.49</option>
+        <option type=number value='705.51'>705.51</option>
+        <option type=number value='713.71'>713.71</option>
+        <option type=number value='722.11'>722.11</option>
+        <option type=number value='730.71'>730.71</option>
+        <option type=number value='739.51'>739.51</option>
+        <option type=number value='748.53'>748.53</option>
+        <option type=number value='757.77'>757.77</option>
+        <option type=number value='767.24'>767.24</option>
+        <option type=number value='776.95'>776.95</option>
+        <option type=number value='786.91'>786.91</option>
+        <option type=number value='797.13'>797.13</option>
+        <option type=number value='807.62'>807.62</option>
+        <option type=number value='818.39'>818.39</option>
+        <option type=number value='829.45'>829.45</option>
+        <option type=number value='840.81'>840.81</option>
+        <option type=number value='852.49'>852.49</option>
+        <option type=number value='864.50'>864.50</option>
+        <option type=number value='876.85'>876.85</option>
+        <option type=number value='889.55'>889.55</option>
+        <option type=number value='902.64'>902.64</option>
+        <option type=number value='916.11'>916.11</option>
+        <option type=number value='929.99'>929.99</option>
+      </select>
+      <input type="submit" value="Calculate">
+    </form>
+  {% endblock %}
+  {% for message in get_flashed_messages(category_filter=['message']) %}
+    <div class="flash">{{ message }}</div>
+  {% endfor %}
+  {% for message in get_flashed_messages(category_filter=['warning']) %}
+    <div class="warn">{{ message }}</div>
+  {% endfor %}
+  {% block caveat %}
+    <p > <b> Notes and Caveats </b> </p>
+    <p >- Note that this exposure time calculator reports only the photon noise contribution to the RV precision. This contribution must be added in quadrature to the 27 cm/s instrumental floor to determine the total measurement precision. </b>
+    <p >- Saturation happens at <b>SNR = 625.</b> Do not go over this limit. </p>
+    <p >- Maximum exposure time is calculated as the exposure time to reach non-linearity for <i> any </i> order. This occurs at approx. SNR = 480. </p>
+    <p >- SNR is reported per 1D extracted pixel. The NEID resolution element is approx. 5 pixels wide. </p>
+    <br/>
+    <p > <a href=https://neid.psu.edu/> <font color="blue"> NEID </font> </a> </p>
+  {% endblock %}
+</section>

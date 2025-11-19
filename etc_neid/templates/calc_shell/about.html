@@ -1,0 +1,65 @@
+<!doctype html>
+<title>{% block title %}{% endblock %} About - NEID Exposure Time Calculator</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style_site.css') }}">
+
+<nav>
+  <h1>NEID Exposure Time Calculator</h1>
+  <ul>
+    <li><a href="{{ url_for('calc_shell.about') }}"><b>[About]</b></a>
+    <li><a href="{{ url_for('calc_shell.calculate_rv') }}">RV Precision</a>
+    <li><a href="{{ url_for('calc_shell.calculate_snr') }}">SNR</a>
+    <li><a href="{{ url_for('calc_shell.calculate_exp_rv') }}">Exposure Time (RV)</a>
+    <li><a href="{{ url_for('calc_shell.calculate_exp_snr') }}">Exposure Time (SNR)</a>
+  </ul>
+</nav>
+
+<section class="content">
+  <header>
+  {%block info %}
+    <p >
+    <i>Proposers to the observing call for NEID should use this calculator to estimate 
+    the exposure times for their observations given a target SNR or RV precision, 
+    and the inverse of those functions. This exposure time calculator was written 
+    by the NEID Science Team and is based on initial best-estimates for the total 
+    system throughput as a function of wavelength, precision from the default data 
+    pipeline, and based on template stellar spectra at vsini = 2 km/s and solar 
+    metallicity. All throughput estimates are deliberately conservative, and there
+    is an additional 30% margin built-in on top of this conservatism.
+    <br /><br />
+    This calculator will be updated as better estimates of system performance 
+    become available, and as on-sky performance is measured.</i>
+    </p>
+  {% endblock %}
+  </header>
+  {% block content %}
+    <p > <b> <u> About the NEID Exposure Time Calculator </u> </b> </p>
+    <p >This calculator is based on precomputed grids with parameter bounds of: </p>
+    <p >&nbsp &nbsp 2700 K &lt T<sub>eff</sub> &lt 6600 K </p>
+    <p >&nbsp &nbsp 3 &lt V-mag &lt 17</p>
+    <p >&nbsp &nbsp 10 s &lt exptime &lt 3600 s</p>
+    <p >&nbsp &nbsp 0.3&quot &lt seeing &lt 1.9&quot s</p>
+    <p > Interpolating beyond these bounds will result in errors in the returned RV values.</p>
+    <p > All calculations are based on BT-Settl synthetic stellar spectra (with
+    logg = 4.5 and solar metallicity), available at: 
+    <a href=http://phoenix.astro.physik.uni-goettingen.de/?page_id=15> 
+    <font color="blue" > http://phoenix.astro.physik.uni-goettingen.de/?page_id=15
+    </font> </a> </p>
+    <p > The grids use a NEID throughput model with R ~ 95,000 and 380 nm -
+    930 nm spectral coverage and a median KPNO atmospheric transmission curve.
+    The calculator assumes airmass 1.1.
+    For RV precision estimates, we exclude regions of the spectrum with 1% or 
+    deeper telluric features (based on TelFit model for WIYN observatory).
+    Median WIYN seeing is 0.8&quot.
+    <p>
+    <b>SNR is reported per 1D extracted pixel.</b> The NEID resolution element is approximately
+    5 pixels wide. </p>
+    <br/>
+    <p>
+    <b> Note that this exposure time calculator reports only the photon noise contribution to the RV precision. This contribution must be added in quadrature to the 27 cm/s instrumental floor to determine the total measurement precision. </b>
+    </p>
+    <br/>
+    <p > <a href=https://neid.psu.edu/> <font color="blue"> NEID </font> </a> </p>
+    <br/>
+    <p > A python implementation of the NEID Exposure Time Calculator is available <a href=https://bitbucket.org/erik_timmermann_noao/neid-etc/> <font color="blue"> here. </font> (https://bitbucket.org/erik_timmermann_noao/neid-etc) </a> </p>
+  {% endblock %}
+</section>

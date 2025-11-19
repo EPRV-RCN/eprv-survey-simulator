@@ -1,0 +1,70 @@
+<!doctype html>
+<title>{% block title %}{% endblock %} Calculate RV Precision - NEID Exposure Time Calculator</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style_site.css') }}">
+
+<nav>
+  <h1>NEID Exposure Time Calculator</h1>
+  <ul>
+    <li><a href="{{ url_for('calc_shell.about') }}">About</a>
+    <li><a href="{{ url_for('calc_shell.calculate_rv') }}"><b>[RV Precision]</b></a>
+    <li><a href="{{ url_for('calc_shell.calculate_snr') }}">SNR</a>
+    <li><a href="{{ url_for('calc_shell.calculate_exp_rv') }}">Exposure Time (RV)</a>
+    <li><a href="{{ url_for('calc_shell.calculate_exp_snr') }}">Exposure Time (SNR)</a>
+  </ul>
+</nav>
+
+<section class="content">
+
+  <header>
+  {% block header %}
+    <p>
+    <i>Proposers to the observing call for NEID should use this calculator to estimate 
+    the exposure times for their observations given a target SNR or RV precision, 
+    and the inverse of those functions. This exposure time calculator was written 
+    by the NEID Science Team and is based on initial best-estimates for the total 
+    system throughput as a function of wavelength, precision from the default data 
+    pipeline, and based on template stellar spectra at vsini = 2 km/s and solar 
+    metallicity. All throughput estimates are deliberately conservative, and there
+    is an additional 30% margin built-in on top of this conservatism.
+    <br /><br />
+    This calculator will be updated as better estimates of system performance 
+    become available, and as on-sky performance is measured.</i>
+    <br /><br />
+    <font size="6"> <b> Calculate Radial Velocity Precision </b> </font>  {% endblock %}
+    </p>
+  </header>
+
+
+  {% block content %}
+    <form method="post">
+      <label for="temperature">Effective Temperature (K):</label>
+      <input type='number' value={{temp}} name="temperature" id="temperature" required min='2701' max='6600' step='1'>
+      <label for="vmag">V-mag:</label>
+      <input type='number' value={{vm}} name="vmag" id="vmag" required min='3.01' max='17' step='0.01'>
+      <label for="exptime">Exposure Time (s):</label>
+      <input type='number' value={{et}} name="exptime" id="exptime" required min='10.0' max='3600' step='0.5'>
+      <label for="vsini">vsini (km/s):</label>
+      <input type='number' value={{vsi}} name="vsini" id="vsini" required min='1.0' max='15.0' step='0.1'>
+      <label for="seeing">Seeing ("):</label>
+      <input type='number' value={{see}} name="seeing" id="seeing" required min='0.31' max='1.89' step='0.01'>
+      <input type="submit" value="Calculate">
+    </form>
+  {% endblock %}
+
+  {% for message in get_flashed_messages(category_filter=['message']) %}
+    <div class="flash">{{ message }}</div>
+  {% endfor %}
+  {% for message in get_flashed_messages(category_filter=['warning']) %}
+    <div class="warn">{{ message }}</div>
+  {% endfor %}
+
+  {% block caveat %}
+    <p > <b> Notes and Caveats </b> </p>
+    <p >- Note that this exposure time calculator reports only the photon noise contribution to the RV precision. This contribution must be added in quadrature to the 27 cm/s instrumental floor to determine the total measurement precision. </b>
+    <p >- Saturation happens at <b>SNR = 625.</b> Do not go over this limit. </p>
+    <p >- Maximum exposure time is calculated as the exposure time to reach non-linearity for <i> any </i> order. This occurs at approx. SNR = 480. </p>
+    <p >- SNR is reported per 1D extracted pixel. The NEID resolution element is approx. 5 pixels wide. </p>
+    <br/>
+    <p > <a href=https://neid.psu.edu/> <font color="blue"> NEID </font> </a> </p>
+  {% endblock %}
+</section>
