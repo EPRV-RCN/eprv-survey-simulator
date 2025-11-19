@@ -10,6 +10,7 @@ import warnings
 
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 
 from datetime import datetime, timedelta
 
@@ -42,31 +43,20 @@ user_stars_input = [
     # {'name': 'HD 456', 'vmag': 7.2},
 ]
 
-# input file paths 
-hwo_file = ""  # path to HWO CSV file 
-weather_file = ""  # path to weather file 
-output_timestamps_file = ""  # path for output file for timestamps
-instrument_etc_path = ""  # path to instrument ETC
+# Get the directory where this script is located
+script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# default paths (temporary functions)
-if not hwo_file:
-    hwo_file = r"C:/Users/shire/Downloads/DI_STARS_EXEP_2025.06.20_11.46.50.csv"
+# Set all paths relative to the repository root
+hwo_file = os.path.join(script_dir, "hwo_star_list_for_neid.xlsx")
+output_timestamps_file = os.path.join(script_dir, "JUST_TIMESTAMPS.txt")
 
-if not weather_file or not output_timestamps_file or not instrument_etc_path:
-    if selected_instrument == "NEID":
-        if not weather_file:
-            weather_file = r"C:\Users\shire\Downloads\KPNO.txt"
-        if not output_timestamps_file:
-            output_timestamps_file = r"C:\Users\shire\Downloads\JUST_TIMESTAMPS.txt"
-        if not instrument_etc_path:
-            instrument_etc_path = r"C:\Users\shire\Downloads\neid etc"
-    elif selected_instrument == "KPF":
-        if not weather_file:
-            weather_file = r"C:\Users\shire\Downloads\MaunaKea.txt"
-        if not output_timestamps_file:
-            output_timestamps_file = r"C:\Users\shire\Downloads\JUST_TIMESTAMPS.txt"
-        if not instrument_etc_path:
-            instrument_etc_path = r"C:\Users\shire\Downloads\KPF-etc-master"
+# Set instrument-specific paths
+if selected_instrument == "NEID":
+    weather_file = os.path.join(script_dir, "KPNO.txt")
+    instrument_etc_path = os.path.join(script_dir, "etc_neid")
+elif selected_instrument == "KPF":
+    weather_file = os.path.join(script_dir, "Maunakea.txt")
+    instrument_etc_path = os.path.join(script_dir, "etc_kpf")
 
 # scheduling parameters (if neither is selected: random selection)
 cadence_days = None      # input: None or number of days // will rule over even_spread_flag
@@ -304,7 +294,7 @@ def query_star_data_astroquery(star_name):
 
 def load_hwo_candidates(filepath):
     """
-    Loads star data from the HWO candidates CSV file including vsini, declination, and Vmag.
+    Loads star data from the HWO candidates Excel file including vsini, declination, and Vmag.
     Returns a tuple containing:
                            - hd_set (set): A set of HD star identifiers.
                            - teff_dict (dict): Dictionary mapping HD to effective temperature (Teff) values.
@@ -313,68 +303,58 @@ def load_hwo_candidates(filepath):
                            - vmag_dict (dict): Dictionary mapping HD to Vmag values from HWO.
     """
     hd_set, teff_dict, vsini_dict, dec_dict, vmag_dict = set(), {}, {}, {}, {}
-    expected_min_cols = 60
-    row_counter = 0
 
     try:
-        with open(filepath, 'r', newline='', encoding='utf-8') as file:
-            reader = csv.reader(file)
-            header = next(reader, None)
-            if header:
-                row_counter += 1
+        # Read Excel file using pandas
+        df = pd.read_excel(filepath)
+        
+        for index, row in df.iterrows():
+            raw_hd = str(row[4]).strip() if pd.notna(row[4]) else ""      # Column E
+            dec_str = str(row[11]).strip() if pd.notna(row[11]) else ""   # Column L
+            hwo_vmag_str = str(row[15]).strip() if pd.notna(row[15]) else "" # Column P
+            teff_str = str(row[25]).strip() if pd.notna(row[25]) else ""  # Column Z
+            vsini_str = str(row[59]).strip() if pd.notna(row[59]) else "" # Column BH
 
-            for row_num_in_file, row in enumerate(reader, start=2):
-                row_counter += 1
+            hd_identifier = ""
+            if raw_hd.upper().startswith("HD "):
+                hd_identifier = raw_hd[3:].strip()
+            else:
+                continue
 
-                if len(row) < expected_min_cols:
-                    continue # Skip this row
+            if not hd_identifier:
+                continue
 
-                raw_hd = row[4].strip()      # Column E
-                dec_str = row[11].strip()    # Column L
-                hwo_vmag_str = row[15].strip() # Column P
-                teff_str = row[25].strip()   # Column Z
-                vsini_str = row[59].strip()  # Column BH
+            hd_set.add(hd_identifier)
 
-                hd_identifier = ""
-                if raw_hd.upper().startswith("HD "):
-                    hd_identifier = raw_hd[3:].strip()
+            try:
+                teff_dict[hd_identifier] = float(teff_str)
+            except ValueError:
+                teff_dict[hd_identifier] = None
+            try:
+                vmag_val = float(hwo_vmag_str)
+                vmag_dict[hd_identifier] = round(vmag_val, 2)
+            except ValueError:
+                vmag_dict[hd_identifier] = None
+
+            try:
+                if vsini_str and vsini_str != "0" and vsini_str != "nan":
+                    vsini_val = float(vsini_str)
+                    vsini_dict[hd_identifier] = round(vsini_val, 1)
                 else:
-                    continue
-
-                if not hd_identifier:
-                    continue
-
-                hd_set.add(hd_identifier)
-
-                try:
-                    teff_dict[hd_identifier] = float(teff_str)
-                except ValueError:
-                    teff_dict[hd_identifier] = None
-                try:
-                    vmag_val = float(hwo_vmag_str)
-                    vmag_dict[hd_identifier] = round(vmag_val, 2)
-                except ValueError:
-                    vmag_dict[hd_identifier] = None
-
-                try:
-                    if vsini_str and vsini_str != "0":
-                        vsini_val = float(vsini_str)
-                        vsini_dict[hd_identifier] = round(vsini_val, 1)
-                    else:
-                        vsini_dict[hd_identifier] = None
-                except ValueError:
                     vsini_dict[hd_identifier] = None
+            except ValueError:
+                vsini_dict[hd_identifier] = None
 
-                try:
-                    dec_dict[hd_identifier] = float(dec_str)
-                except ValueError:
-                    dec_dict[hd_identifier] = None
+            try:
+                dec_dict[hd_identifier] = float(dec_str)
+            except ValueError:
+                dec_dict[hd_identifier] = None
 
     except IOError:
         print(f"Error: HWO candidates file not found at {filepath}")
         return set(), {}, {}, {}, {}
     except Exception as e:
-        print(f"An unexpected error occurred loading HWO candidates data: {e}. Last processed row (approx): {row_counter}")
+        print(f"An unexpected error occurred loading HWO candidates data: {e}")
         return hd_set, teff_dict, vsini_dict, dec_dict, vmag_dict
 
     return hd_set, teff_dict, vsini_dict, dec_dict, vmag_dict
