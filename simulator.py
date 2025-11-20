@@ -50,14 +50,6 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 hwo_file = os.path.join(script_dir, "hwo_star_list_for_neid.xlsx")
 output_timestamps_file = os.path.join(script_dir, "JUST_TIMESTAMPS.txt")
 
-# Set instrument-specific paths
-if selected_instrument == "NEID":
-    weather_file = os.path.join(script_dir, "KPNO.txt")
-    instrument_etc_path = os.path.join(script_dir, "etc_neid")
-elif selected_instrument == "KPF":
-    weather_file = os.path.join(script_dir, "Maunakea.txt")
-    instrument_etc_path = os.path.join(script_dir, "etc_kpf")
-
 # scheduling parameters (if neither is selected: random selection)
 cadence_days = None      # input: None or number of days // will rule over even_spread_flag
 even_spread_flag = True  # input: True or False 
@@ -305,7 +297,6 @@ def load_hwo_candidates(filepath):
     hd_set, teff_dict, vsini_dict, dec_dict, vmag_dict = set(), {}, {}, {}, {}
 
     try:
-        # Read Excel file using pandas
         df = pd.read_excel(filepath)
         
         for index, row in df.iterrows():
@@ -840,9 +831,12 @@ def vsini_scaling(vsini=2.0):
 
 def NEID_exptime_RV(teff, vmag, rv_precision, seeing=0.8, vsini=2.0, use_order=False, order=0):
     """NEID-specific exposure time calculation"""
-    exptime_grid = fits.open(os.path.join(instrument_etc_path,'photon_grid_exptime.fits'))[0].data
-    teff_grid = fits.open(os.path.join(instrument_etc_path,'photon_grid_teff.fits'))[0].data
-    vmag_grid = fits.open(os.path.join(instrument_etc_path,'photon_grid_vmag.fits'))[0].data
+    # Use NEID ETC path directly
+    neid_etc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "etc_neid")
+    
+    exptime_grid = fits.open(os.path.join(neid_etc_path,'photon_grid_exptime.fits'))[0].data
+    teff_grid = fits.open(os.path.join(neid_etc_path,'photon_grid_teff.fits'))[0].data
+    vmag_grid = fits.open(os.path.join(neid_etc_path,'photon_grid_vmag.fits'))[0].data
     seeing_grid=np.array([0.3,0.5,0.7,0.8,0.9,1.1,1.3,1.5,1.7,1.9])
     logexp=np.log10(exptime_grid)
 
@@ -860,17 +854,17 @@ def NEID_exptime_RV(teff, vmag, rv_precision, seeing=0.8, vsini=2.0, use_order=F
         return np.nan
 
     if use_order==True:
-        order_grid = fits.open(os.path.join(instrument_etc_path,'order_wvl_centers.fits'))[0].data[0]
+        order_grid = fits.open(os.path.join(neid_etc_path,'order_wvl_centers.fits'))[0].data[0]
         order_loc=np.where(order_grid==order)[0][0]
         rvprec_grid=[]
         for s in seeing_grid:
-            rvprec_grid_order = fits.open(os.path.join(instrument_etc_path,'dv_uncertainty_master_order_seeing','dv_uncertainty_master_order_'+str(s)+'.fits'))[0].data
+            rvprec_grid_order = fits.open(os.path.join(neid_etc_path,'dv_uncertainty_master_order_seeing','dv_uncertainty_master_order_'+str(s)+'.fits'))[0].data
             grid_s=rvprec_grid_order[order_loc]
             rvprec_grid.append(grid_s)
     else:
         rvprec_grid=[]
         for s in seeing_grid:
-            grid_s=fits.open(os.path.join(instrument_etc_path,'dv_uncertainty_master_seeing','dv_uncertainty_master_'+str(s)+'.fits'))[0].data
+            grid_s=fits.open(os.path.join(neid_etc_path,'dv_uncertainty_master_seeing','dv_uncertainty_master_'+str(s)+'.fits'))[0].data
             rvprec_grid.append(grid_s)
         rvprec_grid=np.array(rvprec_grid)
 
@@ -938,13 +932,16 @@ def kpf_etc_rv(teff, vmag, sigma_rv):
     S Halverson - JPL - 29-Oct-2020
     '''
 
+    # Use KPF ETC path directly
+    kpf_etc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "etc_kpf")
+    
     # Grid files for teff, vmag, exp_time
-    teff_grid_file = os.path.join(instrument_etc_path, 'photon_grid_teff.fits')
-    vmag_grid_file = os.path.join(instrument_etc_path, 'photon_grid_vmag.fits')
-    exp_time_grid_file = os.path.join(instrument_etc_path, 'photon_grid_exptime.fits')
+    teff_grid_file = os.path.join(kpf_etc_path, 'photon_grid_teff.fits')
+    vmag_grid_file = os.path.join(kpf_etc_path, 'photon_grid_vmag.fits')
+    exp_time_grid_file = os.path.join(kpf_etc_path, 'photon_grid_exptime.fits')
 
     # Master grid files for interpolation
-    sigma_rv_total_file = os.path.join(instrument_etc_path, 'dv_uncertainty_master.fits')
+    sigma_rv_total_file = os.path.join(kpf_etc_path, 'dv_uncertainty_master.fits')
 
     # read in data cubes and arrays
     sigma_rv_grid = fits.getdata(sigma_rv_total_file)
@@ -1021,13 +1018,15 @@ if __name__ == "__main__":
     else:
         warnings.filterwarnings('ignore') #cleaning output
 
-        # Select instrument-specific exposure time calculator
+        # Select instrument-specific exposure time calculator and paths
         if selected_instrument == "NEID":
             exposure_time_calculator = neid_exposure_time_calculator
             observatory_location = 'kitt peak'
+            weather_file = os.path.join(script_dir, "KPNO.txt")
         elif selected_instrument == "KPF":
             exposure_time_calculator = kpf_exposure_time_calculator
             observatory_location = 'keck'
+            weather_file = os.path.join(script_dir, "Maunakea.txt")
         else:
             print(f"ERROR: Unknown instrument '{selected_instrument}'. Please choose 'NEID' or 'KPF'.")
             exit(1)
