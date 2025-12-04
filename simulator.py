@@ -277,7 +277,7 @@ def query_star_data_astroquery(star_name):
         if teff is not None:
             data['teff'] = teff
 
-        print(f"Successfully retrieved from SIMBAD: hd_id={data['hd_id']}, dec={data['dec']}, vsini={data['vsini']}, vmag={data['vmag']}, teff={data['teff']}")
+        #print(f"Successfully retrieved from SIMBAD: hd_id={data['hd_id']}, dec={data['dec']}, vsini={data['vsini']}, vmag={data['vmag']}, teff={data['teff']}")
         return data
 
     except Exception as e:
@@ -415,7 +415,7 @@ def get_star_profile(star_input, hwo_fallback_data):
     if missing_keys:
         print(f"Incomplete profile for {star_name} (HD {profile['hd_id']}). Missing: {', '.join(missing_keys)}")
         return None
-    print(f"Successfully built profile for {star_name} (HD {profile['hd_id']}).")
+    #print(f"Successfully built profile for {star_name} (HD {profile['hd_id']}).")
     return profile
 
 
