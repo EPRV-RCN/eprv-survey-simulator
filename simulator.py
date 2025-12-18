@@ -7,6 +7,8 @@ import random
 import re
 import os
 import warnings
+import pytz
+
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -26,6 +28,7 @@ from astroquery.simbad.core import Simbad as SimbadCore
 
 from stellar_gp.argo_model import GPModel, GPData
 from stellar_gp.argo_model import GranulationKernel,OscillationKernel,QPKernel,PerKernel,M52Kernel,M32Kernel,WNKernel, SEKernel,M52PDKernel
+from stellar_gp.argo_model import generate_ts, get_stellar_kernels
 from stellar_gp.stellar_scalings import get_stellar_hypers, calc_Pg
 
 
@@ -36,11 +39,8 @@ from stellar_gp.stellar_scalings import get_stellar_hypers, calc_Pg
 selected_instrument = "KPF"  # input: "NEID" or "KPF"
 
 # input stars with optional parameters
-user_stars_input = [ 
+user_stars_input = [
     {'name': 'HD 166'},
-    # more stars can be added in the same format:
-    # {'name': 'HD 123', 'teff': 5800, 'vmag': 6.5, 'vsini': 2.1, 'dec': 45.2},
-    # {'name': 'HD 456', 'vmag': 7.2},
 ]
 
 # Get the directory where this script is located
@@ -48,11 +48,11 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Set all paths relative to the repository root
 hwo_file = os.path.join(script_dir, "hwo_star_list_for_neid.xlsx")
-output_timestamps_file = os.path.join(script_dir, "JUST_TIMESTAMPS.txt")
+output_timestamps_file = os.path.join(script_dir, "output_timestamps.csv")
 
 # scheduling parameters (if neither is selected: random selection)
 cadence_days = None      # input: None or number of days // will rule over even_spread_flag
-even_spread_flag = True  # input: True or False 
+even_spread_flag = True  # input: True or False
 
 # time parameters
 start_year = 2025  # input: starting yr for scheduling
@@ -60,7 +60,10 @@ num_years = 1  # input: no. of yrs to schedule
 target_nights_for_uniformity = 20  # input: target nights for uniformity calculation
 hours_per_night = 10  # input: available observing hrs/night
 
-
+# Stellar variability configuration
+stellar_kernel_type = "matern52"   # options: "matern52", "qp", "se", "granulation"
+plot_duration_hours = 10
+time_step_seconds = 500
 
 
 
@@ -121,20 +124,17 @@ def get_vmag(name):
     Returns a float (V magnitude) or None if not found/parsable.
     """
     simbad = Simbad()
-    # Request the full set of flux/magnitude fields
     simbad.add_votable_fields("allfluxes")
     result = simbad.query_object(name)
     if result is None:
         return None
 
-    # Helper to parse numeric prefix from strings like "6.07 [0.01]" or "6.07"
     def extract_number(x):
         if x is None:
             return None
         s = str(x).strip()
         if s == '' or s == '--':
             return None
-        # look for a leading float or integer
         m = re.search(r'[-+]?\d+(\.\d+)?', s)
         if m:
             try:
@@ -143,10 +143,8 @@ def get_vmag(name):
                 return None
         return None
 
-    # First pass: look for clear names like FLUX_V, *_V, or something containing 'v' and 'flux'/'mag'
     for col in result.colnames:
         cl = col.lower()
-        # common patterns: 'flux_v', 'allfluxes_v', 'v_mag', 'flux.v', 'v'
         tokens = re.split(r'[^a-z0-9]+', cl)
         if ('v' in tokens or cl.endswith('_v') or cl.endswith('.v')) and ('flux' in cl or 'mag' in cl or 'allfluxes' in cl):
             val = result[col][0]
@@ -154,7 +152,6 @@ def get_vmag(name):
             if num is not None:
                 return num
 
-    # Second pass: tolerant search for any column that contains '_v' or endswith 'v' and looks numeric
     for col in result.colnames:
         cl = col.lower()
         if '_v' in cl or cl.endswith('v'):
@@ -163,14 +160,11 @@ def get_vmag(name):
             if num is not None:
                 return num
 
-    # Third pass: fallback — inspect any column whose values look like photometric magnitudes (small positive numbers ~0-30)
     for col in result.colnames:
         for i in range(len(result)):
             val = result[col][i]
             num = extract_number(val)
             if num is not None and  -5.0 < num < 40.0:
-                # Heuristic: photometric magnitudes are typically in this range
-                # To avoid false positives, prefer columns whose name contains common photometric keywords
                 if any(k in col.lower() for k in ('flux', 'mag', 'allfluxes', 'v', 'vmag')):
                     return num
     return None
@@ -183,7 +177,6 @@ def get_vsini(name):
     if result is None:
         return None
 
-    # identify available rotation measurement columns
     possible_cols = [c for c in result.colnames if "mesrot.vsini" in c.lower()]
     if not possible_cols:
         return None
@@ -192,7 +185,6 @@ def get_vsini(name):
     if bib_col is None:
         return None
 
-    # multiple rows may be returned; pick latest year
     rows = []
     for i in range(len(result)):
         val = result[vsini_col][i]
@@ -253,31 +245,25 @@ def query_star_data_astroquery(star_name):
     data = {'hd_id': None, 'dec': None, 'vsini': None, 'vmag': None, 'teff': None}
 
     try:
-        # Extract HD ID from star name
         name_match = re.search(r'HD\s*(\d+[A-Za-z]*)', star_name, re.IGNORECASE)
         data['hd_id'] = name_match.group(1).strip() if name_match else star_name.replace(' ', '_')
 
-        # Get RA and Dec
         ra, dec = get_ra_dec(star_name)
         if dec is not None:
             data['dec'] = dec
 
-        # Get V magnitude
         vmag = get_vmag(star_name)
         if vmag is not None:
             data['vmag'] = vmag
 
-        # Get vsini
         vsini = get_vsini(star_name)
         if vsini is not None:
-            data['vsini'] = vsini  
+            data['vsini'] = vsini
 
-        # Get Teff
         teff = get_teff(star_name)
         if teff is not None:
             data['teff'] = teff
 
-        #print(f"Successfully retrieved from SIMBAD: hd_id={data['hd_id']}, dec={data['dec']}, vsini={data['vsini']}, vmag={data['vmag']}, teff={data['teff']}")
         return data
 
     except Exception as e:
@@ -298,13 +284,13 @@ def load_hwo_candidates(filepath):
 
     try:
         df = pd.read_excel(filepath)
-        
+
         for index, row in df.iterrows():
-            raw_hd = str(row[4]).strip() if pd.notna(row[4]) else ""      # Column E
-            dec_str = str(row[11]).strip() if pd.notna(row[11]) else ""   # Column L
-            hwo_vmag_str = str(row[15]).strip() if pd.notna(row[15]) else "" # Column P
-            teff_str = str(row[25]).strip() if pd.notna(row[25]) else ""  # Column Z
-            vsini_str = str(row[59]).strip() if pd.notna(row[59]) else "" # Column BH
+            raw_hd = str(row[4]).strip() if pd.notna(row[4]) else ""
+            dec_str = str(row[11]).strip() if pd.notna(row[11]) else ""
+            hwo_vmag_str = str(row[15]).strip() if pd.notna(row[15]) else ""
+            teff_str = str(row[25]).strip() if pd.notna(row[25]) else ""
+            vsini_str = str(row[59]).strip() if pd.notna(row[59]) else ""
 
             hd_identifier = ""
             if raw_hd.upper().startswith("HD "):
@@ -364,7 +350,6 @@ def get_star_profile(star_input, hwo_fallback_data):
         print("Star input is missing a 'name'. Skipping.")
         return None
 
-    # profile with user-provided data
     profile = {
         'name': star_name,
         'hd_id': None,
@@ -374,7 +359,6 @@ def get_star_profile(star_input, hwo_fallback_data):
         'vmag': star_input.get('vmag')
     }
 
-    # Fill in missing data from SIMBAD using new functions
     if any(val is None for val in [profile['teff'], profile['dec'], profile['vsini'], profile['vmag']]):
         simbad_data = query_star_data_astroquery(star_name)
         if simbad_data:
@@ -389,7 +373,6 @@ def get_star_profile(star_input, hwo_fallback_data):
             if profile['teff'] is None and simbad_data.get('teff'):
                 profile['teff'] = simbad_data['teff']
 
-    # making sure we have an HD ID for HWO lookup
     if profile['hd_id'] is None:
         name_match = re.search(r'HD\s*(\d+[A-Za-z]*)', star_name, re.IGNORECASE)
         if name_match:
@@ -397,7 +380,6 @@ def get_star_profile(star_input, hwo_fallback_data):
         else:
             print(f"Could not determine HD identifier for '{star_name}' from input or SIMBAD. Cannot use HWO fallback.")
 
-    # remaining missing data from HWO fallback
     if profile['hd_id'] and profile['hd_id'] in hd_set:
         hd_id = profile['hd_id']
         if profile['teff'] is None:
@@ -409,20 +391,18 @@ def get_star_profile(star_input, hwo_fallback_data):
         if profile['vmag'] is None:
             profile['vmag'] = hwo_vmag.get(hd_id)
 
-    # sanity checks
     required_keys = ['hd_id', 'teff', 'dec', 'vsini', 'vmag']
     missing_keys = [key for key in required_keys if profile.get(key) is None]
     if missing_keys:
         print(f"Incomplete profile for {star_name} (HD {profile['hd_id']}). Missing: {', '.join(missing_keys)}")
         return None
-    #print(f"Successfully built profile for {star_name} (HD {profile['hd_id']}).")
+
     return profile
 
 
 
 
-
-# SCHEDULING FUNCTIONS 
+# SCHEDULING FUNCTIONS
 
 def observable_window(
     star_name=None,
@@ -436,33 +416,28 @@ def observable_window(
 ):
     """
     Identify days of the year when a target is above 'airmass_limit',
-    for at least 'min_hours' hours, during astronomical night, 
+    for at least 'min_hours' hours, during astronomical night,
     from a specified observatory.
     """
-    # --- Setup observer ---
     location = EarthLocation.of_site(observatory)
     observer = Observer(location=location, name=observatory)
-    
-    # --- Setup target ---
+
     if star_name is not None:
         target = FixedTarget.from_name(star_name)
     elif ra is not None and dec is not None:
         target = FixedTarget(coord=SkyCoord(ra*u.deg, dec*u.deg), name="CustomTarget")
     else:
         raise ValueError("Please provide either star_name or (ra, dec).")
-    
-    # --- Altitude cutoff ---
+
     altitude_limit = np.degrees(np.arcsin(1/airmass_limit))
-    
-    days = np.arange(1, 367)  # day of year
+
+    days = np.arange(1, 367)
     observable_hours = []
 
     for day in days:
-        # Reference midnight UTC
         time_midnight = Time(f"{year}-01-01 00:00:00") + (day-1)*u.day
         midnight = observer.midnight(time_midnight, which="nearest")
 
-        # Twilight boundaries
         try:
             evening_twilight = observer.twilight_evening_astronomical(midnight, which="nearest")
             morning_twilight = observer.twilight_morning_astronomical(midnight, which="next")
@@ -470,23 +445,19 @@ def observable_window(
             observable_hours.append(0.0)
             continue
 
-        # Grid of times across the night
         n_points = 200
         delta_t = np.linspace(0, (morning_twilight - evening_twilight).to(u.hour).value, n_points)*u.hour
         times = evening_twilight + delta_t
 
-        # Altitudes
         altitudes = observer.altaz(times, target).alt.deg
 
-        # Count observable time
         mask = altitudes >= altitude_limit
         hours = np.sum(mask) * (delta_t[1]-delta_t[0]).to(u.hour).value
         observable_hours.append(hours)
 
     observable_hours = np.array(observable_hours)
-    
+
     if plot==True:
-        # Optional Plot
         plt.figure(figsize=(10,6))
         plt.plot(days, observable_hours, color="darkblue")
         plt.fill_between(days, 0, observable_hours, alpha=0.3, color="skyblue")
@@ -496,7 +467,6 @@ def observable_window(
         plt.grid(alpha=0.4)
         plt.show()
 
-    # Days where conditions are met
     good_days = days[observable_hours >= min_hours]
     if len(good_days) == 0:
         return None
@@ -511,7 +481,9 @@ def generate_observation_timestamps(
     end_day=365,
     cadence_days=None,
     even_spread=False,
-    seed=42
+    seed=42,
+    observatory_name="Kitt Peak",
+    year=2025
 ):
     """
     Generate observation timestamps over a given period based on cadence or even spread,
@@ -527,17 +499,16 @@ def generate_observation_timestamps(
         if n_obs <= 0:
             continue
 
-        # Determine the observable days for the star 
         star_dec = dec_dict.get(star)
         observable_days_of_year = None
         if star_dec is not None:
             try:
                 observable_days_of_year = observable_window(
                     star_name=f"HD {star}",
-                    observatory="Kitt Peak",
+                    observatory=observatory_name,
                     airmass_limit=1.5,
                     min_hours=2.0,
-                    year=2025,
+                    year=year,
                     plot=False
                 )
             except Exception as e:
@@ -550,12 +521,11 @@ def generate_observation_timestamps(
             print("Stopping execution - no observable days available for the given target(s).")
             return None
 
-        # Schedule observations within the observable window 
         if cadence_days is not None:
             obs_days_raw = list(range(start_day, end_day, cadence_days))
             obs_days = [day for day in obs_days_raw if day in observable_days_of_year]
-            obs_days = obs_days[:n_obs] if len(obs_days) >= n_obs else obs_days 
-            
+            obs_days = obs_days[:n_obs] if len(obs_days) >= n_obs else obs_days
+
         elif even_spread:
             if n_obs > 1:
                 indices = np.round(np.linspace(0, len(observable_days_of_year) - 1, num=n_obs)).astype(int)
@@ -565,7 +535,7 @@ def generate_observation_timestamps(
             else:
                 obs_days = []
         else:
-            obs_days = sorted(np.random.choice(observable_days_of_year, size=n_obs, replace=False)) 
+            obs_days = sorted(np.random.choice(observable_days_of_year, size=n_obs, replace=False))
             print("Fallback mode: Using random days from 'Observable Days'")
 
         observation_timestamps[star] = obs_days
@@ -575,15 +545,10 @@ def generate_observation_timestamps(
 
 
 
-
-# GENERAL SCHEDULING FUNCTIONS 
+# GENERAL SCHEDULING FUNCTIONS
 def calculate_exposures_and_uniform_visits(stars_to_process, teff_dict, vmag_dict, vsini_dict,
                                           exposure_time_calculator,
                                           target_nights_for_uniformity=20, hours_per_night=10):
-    """
-    Generic function to calculate exposure times and determine max uniform observation visits.
-    Can be used with any instrument's exposure_time_calculator function.
-    """
     exposure_times = {}
     total_time_per_cycle_seconds = 0
     print("\nCalculating observation times for selected stars:")
@@ -599,7 +564,6 @@ def calculate_exposures_and_uniform_visits(stars_to_process, teff_dict, vmag_dic
             print(f"Warning: Missing data for HD {hd} (Teff/Vmag/vsini). Skipping exposure calculation.")
             continue
 
-        # Use the provided exposure time calculator (instrument-specific)
         exptime = exposure_time_calculator(teff, vmag, vsini)
 
         if not np.isnan(exptime):
@@ -623,10 +587,6 @@ def calculate_exposures_and_uniform_visits(stars_to_process, teff_dict, vmag_dic
     return valid_selected_stars, exposure_times, max_uniform_visits_calculated
 
 def read_monthly_weather_stats(weather_file):
-    """
-    Reads monthly clear night fractions from a file.
-    Generic function reusable for any observatory.
-    """
     try:
         with open(weather_file, 'r') as f:
             monthly_fractions = [float(line.strip()) for line in f if line.strip()]
@@ -641,10 +601,6 @@ def read_monthly_weather_stats(weather_file):
         return []
 
 def select_observing_nights_with_weather(monthly_weather_fractions, start_year, num_years=1):
-    """
-    Selects potential observing nights over a period of years based on monthly clear night fractions.
-    Generic function reusable for any observatory.
-    """
     observing_dates = []
 
     for year_offset in range(num_years):
@@ -664,17 +620,12 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
                                total_sim_nights_limit=None,
                                cadence_days=None,
                                even_spread_flag=False):
-    """
-    Generates a simulated observing schedule attempting to achieve a target number of observations per star.
-    Generic function reusable for any instrument/observatory.
-    """
     location = Observer.at_site(observatory_location)
     monthly_weather_fractions = read_monthly_weather_stats(weather_file)
     potential_observing_dates = select_observing_nights_with_weather(monthly_weather_fractions, start_year, num_years)
 
-    # Determine target observation days based on cadence/spread logic
     stars_for_cadence = {hd: target_obs_per_star for hd in selected_stars}
-    
+
     desired_obs_days = generate_observation_timestamps(
         selected_stars,
         dec_dict,
@@ -682,16 +633,16 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
         start_day=0,
         end_day=365 * num_years,
         cadence_days=cadence_days,
-        even_spread=even_spread_flag
+        even_spread=even_spread_flag,
+        observatory_name=location.name if hasattr(location, "name") and location.name else "Kitt Peak",
+        year=start_year
     )
-    
+
     star_observations = {hd: [] for hd in selected_stars}
     observations_count = {hd: 0 for hd in selected_stars}
 
-    #print("\nGenerating visibility windows and observations for each target on potential observing nights:")
-    
     processed_nights_count = 0
-    
+
     for obs_date in potential_observing_dates:
         if total_sim_nights_limit is not None and processed_nights_count >= total_sim_nights_limit:
             print(f"\nReached total_sim_nights_limit of {total_sim_nights_limit} nights")
@@ -702,7 +653,7 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
             break
 
         processed_nights_count += 1
-        
+
         current_day_of_year = obs_date.datetime.timetuple().tm_yday
 
         try:
@@ -727,11 +678,10 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
         stars_to_observe_this_night = []
         for hd in selected_stars:
             is_desired_night = current_day_of_year in desired_obs_days.get(hd, [])
-            
+
             if is_desired_night and (target_obs_per_star is None or observations_count[hd] < target_obs_per_star):
                 target = FixedTarget.from_name(f"HD {hd}")
 
-                # Check visibility
                 test_times_in_window = np.linspace(night_start_mjd, night_end_mjd, 5)
                 is_visible_this_night = False
                 for t_mjd in test_times_in_window:
@@ -755,7 +705,6 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
                 star_observations[hd].append(night_start + TimeDelta(random.uniform(0, actual_night_end.mjd - night_start.mjd) * u.day))
                 observations_count[hd] += 1
 
-    #print("\n Summary of Simulated Observations:")
     total_simulated_observations = 0
     for hd, obs_list in star_observations.items():
         print(f"HD {hd}: {len(obs_list)} observations")
@@ -770,14 +719,9 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
 
 
 
-
 # VISUALIZATION FUNCTIONS
 
 def plot_observations_over_year(simulated_observations_data):
-    """
-    Plots all generated observation timestamps as a scatter plot.
-    Generic function reusable for any instrument.
-    """
     if not simulated_observations_data:
         print("No observation data to plot.")
         return
@@ -787,7 +731,7 @@ def plot_observations_over_year(simulated_observations_data):
         if match:
             return int(match.group(1))
         return float('-inf')
-    
+
     star_counts = {hd: len(times) for hd, times in simulated_observations_data.items()}
     sorted_stars = sorted(star_counts.keys(), key=lambda s: get_hd_number(s), reverse=False)
     star_to_yindex = {star: idx for idx, star in enumerate(sorted_stars)}
@@ -811,6 +755,80 @@ def plot_observations_over_year(simulated_observations_data):
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.tight_layout()
     plt.show()
+    
+    
+
+def plot_stellar_rv(times_dt, rv_ts, star_name, ra, dec, observatory_location):
+    if times_dt is None or rv_ts is None:
+        return
+
+    import matplotlib.dates as mdates
+    import pytz
+
+    # Observatory mapping: location (for barycentric correction) + civil timezone (for labeling)
+    obs_key = str(observatory_location).lower()
+
+    if obs_key in ["keck", "maunakea", "mauna kea"]:
+        local_tz = pytz.timezone("Pacific/Honolulu")  # HST
+        location = EarthLocation.of_site("Keck Observatory")
+    elif obs_key in ["kitt peak", "kpno"]:
+        local_tz = pytz.timezone("US/Arizona")  # MST, no DST
+        location = EarthLocation.of_site("Kitt Peak")
+    else:
+        # Fallback: keep labels in UTC if site is unknown to this mapping
+        local_tz = pytz.utc
+        location = EarthLocation.of_site(observatory_location)
+
+    # Build UTC times from the pandas DatetimeIndex
+    t_utc = Time(times_dt.to_pydatetime(), scale="utc")
+
+    # Convert to local civil time for plotting
+    t_local = t_utc.to_datetime(timezone=local_tz)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+
+    # Primary axis: local time
+    ax.plot(t_local, rv_ts, color="purple")
+    
+    # Move primary x-axis to the top
+    ax.xaxis.set_label_position("top")
+    ax.xaxis.tick_top()
+    
+    ax.set_xlabel(f"Local Time ({local_tz.zone})")
+    ax.set_ylabel("RV (m/s)")
+    ax.set_title(f"Synthetic Stellar RV Signal for {star_name} ({stellar_kernel_type})", pad=22)
+    ax.grid(True)
+    
+    ax.xaxis.set_major_formatter(
+        mdates.DateFormatter("%#m-%#d %#H:%M", tz=local_tz)
+    )
+
+    # Secondary x-axis BELOW: BJD_TDB labels at the same tick positions
+    # Use fewer ticks for BJD to avoid overlap
+    tick_locs = ax.get_xticks()[::2]  # take every other tick
+    
+    tick_dt_local = mdates.num2date(tick_locs, tz=local_tz)
+    tick_dt_utc = [dt.astimezone(pytz.utc) for dt in tick_dt_local]
+    
+    t_ticks = Time(tick_dt_utc, scale="utc")
+    target = SkyCoord(ra * u.deg, dec * u.deg)
+    
+    bjd_ticks = (
+        t_ticks.tdb +
+        t_ticks.light_travel_time(target, location=location)
+    ).jd
+    
+    ax_bjd = ax.secondary_xaxis("bottom")
+    ax_bjd.spines["bottom"].set_position(("outward", 18))
+    
+    ax_bjd.set_xticks(tick_locs)
+    ax_bjd.set_xticklabels([f"{bjd:.2f}" for bjd in bjd_ticks])
+    ax_bjd.set_xlabel("Barycentric Julian Date (BJD)")
+
+    plt.tight_layout()
+    plt.show()
+
+
 
 
 
@@ -819,21 +837,17 @@ def plot_observations_over_year(simulated_observations_data):
 # NEID INSTRUMENT MODULE
 
 def apply_neid_vsini_condition(vsini_value):
-    """Apply NEID condition: minimum vsini of 1.0 km/s"""
     if vsini_value is not None and vsini_value < 1.0:
         return 1.0
     return vsini_value
 
 def vsini_scaling(vsini=2.0):
-    """Scale the RV precision based to account for rotational broadening effects"""
     precision_ratio = 0.000103 * vsini**4. - 0.004042 * vsini**3 + 0.048354 * vsini ** 2. - 0.014283 * vsini + 0.868
     return precision_ratio
 
 def NEID_exptime_RV(teff, vmag, rv_precision, seeing=0.8, vsini=2.0, use_order=False, order=0):
-    """NEID-specific exposure time calculation"""
-    # Use NEID ETC path directly
     neid_etc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "etc_neid")
-    
+
     exptime_grid = fits.open(os.path.join(neid_etc_path,'photon_grid_exptime.fits'))[0].data
     teff_grid = fits.open(os.path.join(neid_etc_path,'photon_grid_teff.fits'))[0].data
     vmag_grid = fits.open(os.path.join(neid_etc_path,'photon_grid_vmag.fits'))[0].data
@@ -887,11 +901,8 @@ def NEID_exptime_RV(teff, vmag, rv_precision, seeing=0.8, vsini=2.0, use_order=F
     return exptime
 
 def neid_exposure_time_calculator(teff, vmag, vsini):
-    """Wrapper function for NEID exposure time calculation with instrument-specific conditions"""
-    # Apply NEID-specific conditions
     vsini = apply_neid_vsini_condition(vsini)
     return NEID_exptime_RV(teff, vmag, 0.5, seeing=1.0, vsini=vsini)
-
 
 
 
@@ -899,58 +910,23 @@ def neid_exposure_time_calculator(teff, vmag, vsini):
 # KPF INSTRUMENT MODULE
 
 def kpf_exposure_time_calculator(teff, vmag, vsini):
-    """Wrapper function for KPF exposure time calculation"""
     return kpf_etc_rv(teff, vmag, 0.5)
 
 def kpf_etc_rv(teff, vmag, sigma_rv):
-    '''
-    Estimates the exposure time required to reach a specified RV uncertainty
-    value (sigma_rv) for a given stellar target. The target is defined by the
-    stellar effective temperature (teff) and V magnitude (vmag)
-
-    This function interpolates over a pre-computed grid of RV uncertainty values
-    to estimate the optimum exposure length. This is done by looping through
-    'trial' exposure time guesses to see which yields sigma_rv closest to the
-    desired value.
-
-    Parameters
-    ----------
-    teff : :obj:`float`
-        Target effective temperature
-
-    vmag : :obj:`float`
-        Target V magnitude
-
-    sigma_rv : :obj:`float`
-        Desired integrated RV uncertainty (photons only)
-
-    Returns
-    -------
-    exptime : :obj:`float`
-        Estimated exposure time for reaching specified sigma_rv
-
-    S Halverson - JPL - 29-Oct-2020
-    '''
-
-    # Use KPF ETC path directly
     kpf_etc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "etc_kpf")
-    
-    # Grid files for teff, vmag, exp_time
+
     teff_grid_file = os.path.join(kpf_etc_path, 'photon_grid_teff.fits')
     vmag_grid_file = os.path.join(kpf_etc_path, 'photon_grid_vmag.fits')
     exp_time_grid_file = os.path.join(kpf_etc_path, 'photon_grid_exptime.fits')
 
-    # Master grid files for interpolation
     sigma_rv_total_file = os.path.join(kpf_etc_path, 'dv_uncertainty_master.fits')
 
-    # read in data cubes and arrays
     sigma_rv_grid = fits.getdata(sigma_rv_total_file)
     teff_grid = fits.getdata(teff_grid_file)
     vmag_grid = fits.getdata(vmag_grid_file)
     exptime_grid = fits.getdata(exp_time_grid_file)
     logexp = np.log10(exptime_grid)
 
-    # check that inputs are within the grid boundaries
     flag_bound = True
     if teff < np.min(teff_grid) or teff > np.max(teff_grid):
         print("Temperature out of bounds (%d K to %d K)" % (np.amin(teff_grid), np.amax(teff_grid)))
@@ -961,7 +937,6 @@ def kpf_etc_rv(teff, vmag, sigma_rv):
     if not flag_bound:
         return np.nan
 
-    # Get fractional indices for relevant input parameters
     teff_index_spline = InterpolatedUnivariateSpline(teff_grid,
                                                      np.arange(len(teff_grid),
                                                                dtype=np.double))
@@ -972,44 +947,151 @@ def kpf_etc_rv(teff, vmag, sigma_rv):
                                                                dtype=np.double))
     vmag_location = vmag_index_spline(vmag)
 
-    # dummy criterea variables for loop
     ind = 2
     maxout = 1e10
 
-    # while trial exposure time yields worse precision, keep increasing until
-    # you reach specified sigma_rv
     while maxout > sigma_rv:
-
-        # dummy guess trial exposure
         trial_exp = min(exptime_grid) + ind
 
-        # fractional index for trial_exp in exptime_grid
         exptime_index = InterpolatedUnivariateSpline(logexp,
                                                      np.arange(len(exptime_grid),
                                                                dtype=np.double))(np.log10(trial_exp))
 
-        # recompute expected sigma_rv based on trial exposure time
         sigma_rv_interpolator = RegularGridInterpolator((np.arange(len(exptime_grid)),
                                                          np.arange(len(vmag_grid)),
                                                          np.arange(len(teff_grid))),
                                                         sigma_rv_grid)
 
         inputs = [exptime_index, vmag_location, teff_location]
-
-        # store as new maximum
         maxout = sigma_rv_interpolator(inputs)[0]
-
-        # increase exposure time by 1 second
         ind += 1
 
-    # last 'trial' exposure time is correct answer
     exptime = trial_exp
-
     return exptime
 
 
 
-# STELLAR GP KERNELS 
+
+# STELLAR GP KERNELS
+
+def build_stellar_kernel(kernel_type, teff=None):
+    if kernel_type == "granulation":
+        # Built in stellar kernels expect time in seconds in GPData (per example notebook)
+        # We use solar logg=4.43 and the available Teff if provided; otherwise solar defaults
+        logg_sun = 4.43
+        if teff is None:
+            kosc, kgran1, kgran2 = get_stellar_kernels()
+        else:
+            kosc, kgran1, kgran2 = get_stellar_kernels(logg_sun, teff)
+        return [kosc, kgran1, kgran2]
+
+    if kernel_type == "matern52":
+        return M52PDKernel(0.5, 0.5, 0.05)
+    if kernel_type == "qp":
+        return QPKernel(1.0, 10.0, 0.5, 0.5)
+    if kernel_type == "se":
+        return SEKernel(1.0, 0.5)
+
+    raise ValueError(f"Unknown kernel type: {kernel_type}")
+    
+    
+def sample_stellar_rv_at_observations(obs_times, ra, dec, observatory_location):
+    import pytz
+
+    # Observatory setup
+    obs_key = observatory_location.lower()
+    if obs_key in ["keck", "maunakea", "mauna kea"]:
+        local_tz = pytz.timezone("Pacific/Honolulu")
+        location = EarthLocation.of_site("Keck Observatory")
+    elif obs_key in ["kitt peak", "kpno"]:
+        local_tz = pytz.timezone("US/Arizona")
+        location = EarthLocation.of_site("Kitt Peak")
+    else:
+        local_tz = pytz.utc
+        location = EarthLocation.of_site(observatory_location)
+
+    # Convert observation times to Astropy Time
+    t_utc = Time([t.to_datetime() for t in obs_times], scale="utc")
+
+    # Reference epoch
+    t0 = t_utc[0]
+
+    # GP time in days
+    t_days = (t_utc - t0).to(u.day).value
+    duration_days = np.full_like(t_days, 500.0 / 86400.0)
+
+    rv = np.zeros_like(t_days)
+    rv_err = np.full_like(t_days, 0.5)
+
+    kernels = build_stellar_kernel(stellar_kernel_type)
+    if isinstance(kernels, list):
+        model = GPModel(kernels=kernels)
+    else:
+        model = GPModel(kernels=[kernels])
+
+
+    data = GPData(
+        time=t_days,
+        duration=duration_days,
+        rv=rv,
+        rv_err=rv_err
+    )
+
+    rv_samples = generate_ts(model, data, ignore_errs=True)
+
+    # Compute BJD_TDB
+    target = SkyCoord(ra * u.deg, dec * u.deg)
+    bjd = (t_utc.tdb + t_utc.light_travel_time(target, location=location)).jd
+
+    # Local times
+    local_times = t_utc.to_datetime(timezone=local_tz)
+
+    return bjd, local_times, rv_samples, rv_err
+
+
+def generate_stellar_rv_timeseries(timestamps, teff=None, obs_duration_sec=500.0):
+    if len(timestamps) == 0:
+        return None, None
+
+    t0 = timestamps[0].to_datetime()
+    n_points = int(plot_duration_hours * 3600 / time_step_seconds)
+
+    times_dt = pd.date_range(
+        start=t0,
+        periods=n_points,
+        freq=f"{time_step_seconds}s"
+    )
+
+    times_sec_rel = (times_dt - t0).total_seconds().to_numpy()
+
+    # Exposure duration (seconds)
+    duration_sec = np.full_like(times_sec_rel, float(obs_duration_sec), dtype=float)
+
+    # Base arrays
+    rv = np.zeros_like(times_sec_rel, dtype=float)
+    rv_err = np.full_like(times_sec_rel, 0.5, dtype=float)
+
+    kernels = build_stellar_kernel(stellar_kernel_type, teff=teff)
+
+    # Time unit handling consistent with the example notebook:
+    # - get_stellar_kernels() (osc + gran) expects time in seconds in GPData
+    # - non-SHO examples often use days; keep those consistent
+    if stellar_kernel_type == "granulation":
+        time_for_gp = times_sec_rel
+        duration_for_gp = duration_sec
+        data = GPData(time=time_for_gp, duration=duration_for_gp, rv=rv, rv_err=rv_err)
+        stellar_model = GPModel(kernels=kernels)
+        rv_ts = generate_ts(stellar_model, data, ignore_errs=True)
+        return times_dt, rv_ts
+
+    # Non-SHO path: use days consistently
+    time_days = times_sec_rel / (24.0 * 3600.0)
+    duration_days = duration_sec / (24.0 * 3600.0)
+    data = GPData(time=time_days, duration=duration_days, rv=rv, rv_err=rv_err)
+
+    stellar_model = GPModel(kernels=[kernels])
+    rv_ts = generate_ts(stellar_model, data, ignore_errs=True)
+    return times_dt, rv_ts
 
 
 
@@ -1017,98 +1099,105 @@ def kpf_etc_rv(teff, vmag, sigma_rv):
 # MAIN EXECUTION
 
 if __name__ == "__main__":
-    if not user_stars_input:
-        print("No stars input provided by user.")
+
+    warnings.filterwarnings('ignore')
+
+    if selected_instrument == "NEID":
+        exposure_time_calculator = neid_exposure_time_calculator
+        observatory_location = 'kitt peak'
+        weather_file = os.path.join(script_dir, "KPNO.txt")
+    elif selected_instrument == "KPF":
+        exposure_time_calculator = kpf_exposure_time_calculator
+        observatory_location = 'keck'
+        weather_file = os.path.join(script_dir, "Maunakea.txt")
     else:
-        warnings.filterwarnings('ignore') #cleaning output
+        raise ValueError("Unknown instrument")
 
-        # Select instrument-specific exposure time calculator and paths
-        if selected_instrument == "NEID":
-            exposure_time_calculator = neid_exposure_time_calculator
-            observatory_location = 'kitt peak'
-            weather_file = os.path.join(script_dir, "KPNO.txt")
-        elif selected_instrument == "KPF":
-            exposure_time_calculator = kpf_exposure_time_calculator
-            observatory_location = 'keck'
-            weather_file = os.path.join(script_dir, "Maunakea.txt")
-        else:
-            print(f"ERROR: Unknown instrument '{selected_instrument}'. Please choose 'NEID' or 'KPF'.")
-            exit(1)
+    hwo_fallback_data = load_hwo_candidates(hwo_file)
 
-        print(f"\nUsing {selected_instrument} instrument at {observatory_location} observatory")
-        print(f"Scheduling parameters: Start year={start_year}, Num years={num_years}")
-        print(f"Target nights for uniformity: {target_nights_for_uniformity}, Hours per night: {hours_per_night}")
+    selected_stars_list = []
+    final_teff_dict = {}
+    final_vmag_dict = {}
+    final_vsini_dict = {}
+    final_dec_dict = {}
 
-        # loading HWO data for fallback lookup
-        hwo_fallback_data = load_hwo_candidates(hwo_file)
+    for star_input in user_stars_input:
+        profile = get_star_profile(star_input, hwo_fallback_data)
+        if profile:
+            hd = profile['hd_id']
+            selected_stars_list.append(hd)
+            final_teff_dict[hd] = profile['teff']
+            final_vmag_dict[hd] = profile['vmag']
+            final_vsini_dict[hd] = profile['vsini']
+            final_dec_dict[hd] = profile['dec']
 
-        # processing user-provided stars to fill in missing data
-        selected_stars_list = []
-        final_teff_dict, final_vmag_dict, final_vsini_dict, final_dec_dict = {}, {}, {}, {}
+    selected_stars, exposure_times, max_uniform_visits_calculated = \
+        calculate_exposures_and_uniform_visits(
+            selected_stars_list,
+            final_teff_dict,
+            final_vmag_dict,
+            final_vsini_dict,
+            exposure_time_calculator,
+            target_nights_for_uniformity,
+            hours_per_night
+        )
 
-        for star_input in user_stars_input:
-            profile = get_star_profile(star_input, hwo_fallback_data)
+    simulated_observations_data = generate_observing_schedule(
+        selected_stars,
+        exposure_times,
+        final_dec_dict,
+        weather_file,
+        observatory_location=observatory_location,
+        start_year=start_year,
+        num_years=num_years,
+        clear_night_threshold=0.6,
+        target_obs_per_star=max_uniform_visits_calculated,
+        cadence_days=cadence_days,
+        even_spread_flag=even_spread_flag
+    )
+
+    with open(output_timestamps_file, "w") as f:
+        f.write("BJD_TDB,LOCAL_TIME,RV,RV_ERR\n")
+    
+        for hd, obs_times in simulated_observations_data.items():
+            ra, dec = get_ra_dec(f"HD {hd}")
+    
+            bjd, local_times, rv_vals, rv_errs = sample_stellar_rv_at_observations(
+                obs_times,
+                ra,
+                dec,
+                observatory_location
+            )
+    
+            for i in range(len(bjd)): 
+                rv_val = float(rv_vals[i])
+                rv_err = float(rv_errs[i])
             
-            if profile:
-                hd_id = profile['hd_id']
-                selected_stars_list.append(hd_id)
-                final_teff_dict[hd_id] = profile['teff']
-                final_vmag_dict[hd_id] = profile['vmag']
-                final_vsini_dict[hd_id] = profile['vsini']
-                final_dec_dict[hd_id] = profile['dec']
-
-        if selected_stars_list:
-            selected_stars, exposure_times, max_uniform_visits_calculated = \
-                calculate_exposures_and_uniform_visits(
-                    selected_stars_list,
-                    final_teff_dict,
-                    final_vmag_dict,
-                    final_vsini_dict,
-                    exposure_time_calculator=exposure_time_calculator,  # Use selected instrument calculator
-                    target_nights_for_uniformity=target_nights_for_uniformity,
-                    hours_per_night=hours_per_night
+                f.write(
+                    f"{bjd[i]:.8f},"
+                    f"{local_times[i].strftime('%Y-%m-%d %H:%M:%S.%f')},"
+                    f"{rv_val:.3f},"
+                    f"{rv_err:.3f}\n"
                 )
 
-            # sanity check
-            if not selected_stars:
-                print("ERROR: No valid stars with exposure time calculations.")
-                exit(1)
 
-            simulated_observations_data = generate_observing_schedule(
-                selected_stars,
-                exposure_times,
-                final_dec_dict,
-                weather_file,
-                observatory_location=observatory_location,  # Use selected observatory
-                start_year=start_year,
-                num_years=num_years,
-                clear_night_threshold=0.6,
-                target_obs_per_star=max_uniform_visits_calculated,
-                cadence_days=cadence_days,
-                even_spread_flag=even_spread_flag
-            )
-
-            # Check if scheduling was successful
-            if simulated_observations_data is None:
-                print("ERROR: Observation scheduling failed due to observable window issues.")
-                exit(1)
-
-            try:
-                with open(output_timestamps_file, 'w', newline='') as outfile:
-                    outfile.write("Observation Timestamp\n")
-                    for hd_number, obs_times in simulated_observations_data.items():
-                        for t in obs_times:
-                            outfile.write(f"{t.iso}\n")
-                print(f"Observation timestamps saved to '{output_timestamps_file}'")
-
-            except IOError as e:
-                print(f"Error writing to file {output_timestamps_file}: {e}")
-
-            #print("\n Plotting observation timestamps over the year: ")
-            plot_observations_over_year(simulated_observations_data)
-
-        else:
-            print("\nExecution complete. No stars from the user input could be processed.")
-            exit(1)
-        
-        print("\nExecution complete.")
+                
+    # Plot observation cadence over the year
+    plot_observations_over_year(simulated_observations_data)
+    
+    # Generate and plot stellar RVs
+    for hd, obs_times in simulated_observations_data.items():
+        ra, dec = get_ra_dec(f"HD {hd}")
+    
+        times_dt, rv_ts = generate_stellar_rv_timeseries(obs_times)
+    
+        plot_stellar_rv(
+            times_dt,
+            rv_ts,
+            f"HD {hd}",
+            ra,
+            dec,
+            observatory_location
+        )
+    
+    print("Execution complete.")

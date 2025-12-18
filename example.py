@@ -84,7 +84,7 @@ if profile and observable_days is not None:
     available_time_seconds = TARGET_NIGHTS * hours_per_night * 3600
     max_observations = int(available_time_seconds // exposure_time)
     
-    print(f"\n4.   Maximum observations in {TARGET_NIGHTS} nights: {max_observations}")
+    print(f"\n4. Maximum observations in {TARGET_NIGHTS} nights: {max_observations}")
     
     # Prepare data for generate_observation_timestamps
     stars_list = [profile['hd_id']]
