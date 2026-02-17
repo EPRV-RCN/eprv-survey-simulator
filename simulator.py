@@ -26,11 +26,9 @@ from scipy.interpolate import InterpolatedUnivariateSpline, RegularGridInterpola
 from astroquery.simbad import Simbad
 from astroquery.simbad.core import Simbad as SimbadCore
 
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-
-# Add the stellar_gp subdirectory to path
-stellar_gp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stellar_gp")
-sys.path.insert(0, stellar_gp_path)
+# Add the repository root to path
+repo_path = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, repo_path)
 
 from stellar_gp.argo_model import GPModel, GPData
 from stellar_gp.argo_model import GranulationKernel,OscillationKernel,QPKernel,PerKernel,M52Kernel,M32Kernel,WNKernel, SEKernel,M52PDKernel
