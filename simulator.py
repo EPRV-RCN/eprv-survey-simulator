@@ -8,7 +8,7 @@ import re
 import os
 import warnings
 import pytz
-
+import sys
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -26,12 +26,16 @@ from scipy.interpolate import InterpolatedUnivariateSpline, RegularGridInterpola
 from astroquery.simbad import Simbad
 from astroquery.simbad.core import Simbad as SimbadCore
 
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
+# Add the stellar_gp subdirectory to path
+stellar_gp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stellar_gp")
+sys.path.insert(0, stellar_gp_path)
+
 from stellar_gp.argo_model import GPModel, GPData
 from stellar_gp.argo_model import GranulationKernel,OscillationKernel,QPKernel,PerKernel,M52Kernel,M32Kernel,WNKernel, SEKernel,M52PDKernel
 from stellar_gp.argo_model import generate_ts, get_stellar_kernels
 from stellar_gp.stellar_scalings import get_stellar_hypers, calc_Pg
-
-
 
 
 # USER INPUT / CONFIGURATION MODULE
