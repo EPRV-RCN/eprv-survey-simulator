@@ -26,7 +26,6 @@ from scipy.interpolate import InterpolatedUnivariateSpline, RegularGridInterpola
 from astroquery.simbad import Simbad
 from astroquery.simbad.core import Simbad as SimbadCore
 
-# Add the repository root to path
 repo_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, repo_path)
 
@@ -42,7 +41,7 @@ selected_instrument = "KPF"  # input: "NEID" or "KPF"
 
 # input stars with optional parameters
 user_stars_input = [
-    {'name': 'HD 166'},
+    {'name': 'HD 142860'},
 ]
 
 # Get the directory where this script is located
@@ -122,7 +121,7 @@ def get_ra_dec(name):
 
 def get_vmag(name):
     """
-    Retrieve Johnson V-band magnitude for `name` using SIMBAD's allfluxes votable field.
+    Retrieve V-band magnitude for `name` using SIMBAD's allfluxes votable field.
     Returns a float (V magnitude) or None if not found/parsable.
     """
     simbad = Simbad()
@@ -621,7 +620,8 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
                                target_obs_per_star=None,
                                total_sim_nights_limit=None,
                                cadence_days=None,
-                               even_spread_flag=False):
+                               even_spread_flag=False, 
+                               verbose=True):
     location = Observer.at_site(observatory_location)
     monthly_weather_fractions = read_monthly_weather_stats(weather_file)
     potential_observing_dates = select_observing_nights_with_weather(monthly_weather_fractions, start_year, num_years)
@@ -639,6 +639,9 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
         observatory_name=location.name if hasattr(location, "name") and location.name else "Kitt Peak",
         year=start_year
     )
+    
+    if desired_obs_days is None:
+        desired_obs_days = {}
 
     star_observations = {hd: [] for hd in selected_stars}
     observations_count = {hd: 0 for hd in selected_stars}
@@ -647,11 +650,13 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
 
     for obs_date in potential_observing_dates:
         if total_sim_nights_limit is not None and processed_nights_count >= total_sim_nights_limit:
-            print(f"\nReached total_sim_nights_limit of {total_sim_nights_limit} nights")
+            if verbose:
+                print(f"\nReached total_sim_nights_limit of {total_sim_nights_limit} nights")
             break
 
         if target_obs_per_star is not None and all(count >= target_obs_per_star for count in observations_count.values()):
-            print("\nAll stars have reached their target number of observations")
+            if verbose:
+                print("\nAll stars have reached their target number of observations")
             break
 
         processed_nights_count += 1
@@ -709,12 +714,14 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
 
     total_simulated_observations = 0
     for hd, obs_list in star_observations.items():
-        print(f"HD {hd}: {len(obs_list)} observations")
+        if verbose:
+            print(f"HD {hd}: {len(obs_list)} observations")
         total_simulated_observations += len(obs_list)
 
-    print(f"\nTotal simulated observations across all selected stars: {total_simulated_observations}")
-    print(f"Total potential observing nights: {len(potential_observing_dates)}")
-    print(f"Actual nights processed in simulation: {processed_nights_count}")
+    if verbose:
+        print(f"\nTotal simulated observations across all selected stars: {total_simulated_observations}")
+        print(f"Total potential observing nights: {len(potential_observing_dates)}")
+        print(f"Actual nights processed in simulation: {processed_nights_count}")
 
     return star_observations
 
