@@ -35,13 +35,13 @@ from stellar_gp.argo_model import generate_ts, get_stellar_kernels
 from stellar_gp.stellar_scalings import get_stellar_hypers, calc_Pg
 
 
-# USER INPUT / CONFIGURATION MODULE
+# USER INPUT / CONFIGURATION MODULE:
 
-selected_instrument = "KPF"  # input: "NEID" or "KPF"
+selected_instrument = "NEID"  # input: "NEID" or "KPF"
 
 # input stars with optional parameters
 user_stars_input = [
-    {'name': 'HD 142860'},
+    {'name': 'HD 166'},
 ]
 
 # Get the directory where this script is located
@@ -60,6 +60,10 @@ start_year = 2025  # input: starting yr for scheduling
 num_years = 1  # input: no. of yrs to schedule
 target_nights_for_uniformity = 20  # input: target nights for uniformity calculation
 hours_per_night = 10  # input: available observing hrs/night
+
+# Chaplin (2019) oscillation-averaging filter toggle.
+# When True: effective exptime = max(ETC_exptime, chaplin_exptime) per star. 
+apply_chaplin_filter = True
 
 # Stellar variability configuration
 stellar_kernel_type = "matern52"   # options: "matern52", "qp", "se", "granulation"
@@ -273,15 +277,20 @@ def query_star_data_astroquery(star_name):
 
 def load_hwo_candidates(filepath):
     """
-    Loads star data from the HWO candidates Excel file including vsini, declination, and Vmag.
+    Loads star data from the HWO candidates Excel file including vsini, declination, Vmag,
+    and Chaplin (2019) oscillation-averaging exposure times (col BI, index 61).
     Returns a tuple containing:
                            - hd_set (set): A set of HD star identifiers.
-                           - teff_dict (dict): Dictionary mapping HD to effective temperature (Teff) values.
+                           - teff_dict (dict): Dictionary mapping HD to Teff values.
                            - vsini_dict (dict): Dictionary mapping HD to vsini values.
                            - dec_dict (dict): Dictionary mapping HD to declination values.
-                           - vmag_dict (dict): Dictionary mapping HD to Vmag values from HWO.
+                           - vmag_dict (dict): Dictionary mapping HD to Vmag values.
+                           - chaplin_exptime_dict (dict): Dictionary mapping HD to Chaplin
+                             oscillation-averaging exposure time in seconds (10 cm/s threshold).
+                             None for stars where the value is missing or unparseable.
     """
-    hd_set, teff_dict, vsini_dict, dec_dict, vmag_dict = set(), {}, {}, {}, {}
+    hd_set, teff_dict, vsini_dict, dec_dict, vmag_dict, chaplin_exptime_dict = \
+        set(), {}, {}, {}, {}, {}
 
     try:
         df = pd.read_excel(filepath)
@@ -292,6 +301,7 @@ def load_hwo_candidates(filepath):
             hwo_vmag_str = str(row[15]).strip() if pd.notna(row[15]) else ""
             teff_str = str(row[25]).strip() if pd.notna(row[25]) else ""
             vsini_str = str(row[59]).strip() if pd.notna(row[59]) else ""
+            chaplin_str = str(row[60]).strip() if pd.notna(row[60]) else ""
 
             hd_identifier = ""
             if raw_hd.upper().startswith("HD "):
@@ -328,14 +338,19 @@ def load_hwo_candidates(filepath):
             except ValueError:
                 dec_dict[hd_identifier] = None
 
+            try:
+                chaplin_exptime_dict[hd_identifier] = float(chaplin_str)
+            except ValueError:
+                chaplin_exptime_dict[hd_identifier] = None
+
     except IOError:
         print(f"Error: HWO candidates file not found at {filepath}")
-        return set(), {}, {}, {}, {}
+        return set(), {}, {}, {}, {}, {}
     except Exception as e:
         print(f"An unexpected error occurred loading HWO candidates data: {e}")
-        return hd_set, teff_dict, vsini_dict, dec_dict, vmag_dict
+        return hd_set, teff_dict, vsini_dict, dec_dict, vmag_dict, chaplin_exptime_dict
 
-    return hd_set, teff_dict, vsini_dict, dec_dict, vmag_dict
+    return hd_set, teff_dict, vsini_dict, dec_dict, vmag_dict, chaplin_exptime_dict
 
 def get_star_profile(star_input, hwo_fallback_data):
     """
@@ -345,7 +360,7 @@ def get_star_profile(star_input, hwo_fallback_data):
     3. HWO CSV fallback
     Returns a dictionary with the complete profile or None if essential data is missing.
     """
-    hd_set, hwo_teff, hwo_vsini, hwo_dec, hwo_vmag = hwo_fallback_data
+    hd_set, hwo_teff, hwo_vsini, hwo_dec, hwo_vmag, hwo_chaplin = hwo_fallback_data
     star_name = star_input.get('name')
     if not star_name:
         print("Star input is missing a 'name'. Skipping.")
@@ -357,7 +372,8 @@ def get_star_profile(star_input, hwo_fallback_data):
         'teff': star_input.get('teff'),
         'dec': star_input.get('dec'),
         'vsini': star_input.get('vsini'),
-        'vmag': star_input.get('vmag')
+        'vmag': star_input.get('vmag'),
+        'chaplin_exptime': star_input.get('chaplin_exptime'),
     }
 
     if any(val is None for val in [profile['teff'], profile['dec'], profile['vsini'], profile['vmag']]):
@@ -391,6 +407,8 @@ def get_star_profile(star_input, hwo_fallback_data):
             profile['vsini'] = hwo_vsini.get(hd_id)
         if profile['vmag'] is None:
             profile['vmag'] = hwo_vmag.get(hd_id)
+        if profile['chaplin_exptime'] is None:
+            profile['chaplin_exptime'] = hwo_chaplin.get(hd_id)
 
     required_keys = ['hd_id', 'teff', 'dec', 'vsini', 'vmag']
     missing_keys = [key for key in required_keys if profile.get(key) is None]
@@ -549,7 +567,9 @@ def generate_observation_timestamps(
 # GENERAL SCHEDULING FUNCTIONS
 def calculate_exposures_and_uniform_visits(stars_to_process, teff_dict, vmag_dict, vsini_dict,
                                           exposure_time_calculator,
-                                          target_nights_for_uniformity=20, hours_per_night=10):
+                                          target_nights_for_uniformity=20, hours_per_night=10,
+                                          chaplin_exptime_dict=None,
+                                          apply_chaplin_filter=False):
     exposure_times = {}
     total_time_per_cycle_seconds = 0
     print("\nCalculating observation times for selected stars:")
@@ -565,14 +585,32 @@ def calculate_exposures_and_uniform_visits(stars_to_process, teff_dict, vmag_dic
             print(f"Warning: Missing data for HD {hd} (Teff/Vmag/vsini). Skipping exposure calculation.")
             continue
 
-        exptime = exposure_time_calculator(teff, vmag, vsini)
+        etc_exptime = exposure_time_calculator(teff, vmag, vsini)
 
-        if not np.isnan(exptime):
-            total_obs_duration = exptime
-            exposure_times[hd] = total_obs_duration
-            total_time_per_cycle_seconds += total_obs_duration
+        if not np.isnan(etc_exptime):
+            if apply_chaplin_filter:
+                chaplin_time = chaplin_exptime_dict.get(hd) if chaplin_exptime_dict else None
+                if chaplin_time is None:
+                    print(f"  WARNING: Chaplin filter is ON but no Chaplin exptime found for "
+                          f"HD {hd}. Using ETC-only.")
+                    exptime = etc_exptime
+                    binding = "ETC"
+                else:
+                    exptime = max(etc_exptime, chaplin_time)
+                    binding = "CHAPLIN" if chaplin_time >= etc_exptime else "ETC"
+                print(f"HD {hd}: T_eff={teff:.0f}K, Vmag={vmag:.2f}, vsini={vsini:.1f} km/s "
+                      f"-> {exptime:.2f} s  "
+                      f"[ETC: {etc_exptime:.0f}s, Chaplin: {chaplin_time:.0f}s, binding: {binding}]"
+                      if chaplin_time is not None else
+                      f"HD {hd}: T_eff={teff:.0f}K, Vmag={vmag:.2f}, vsini={vsini:.1f} km/s "
+                      f"-> {exptime:.2f} s  [ETC: {etc_exptime:.0f}s, Chaplin: N/A, binding: ETC]")
+            else:
+                exptime = etc_exptime
+                print(f"HD {hd}: T_eff={teff:.0f}K, Vmag={vmag:.2f}, vsini={vsini:.1f} km/s -> {exptime:.2f} s")
+
+            exposure_times[hd] = exptime
+            total_time_per_cycle_seconds += exptime
             valid_selected_stars.append(hd)
-            print(f"HD {hd}: T_eff={teff:.0f}K, Vmag={vmag:.2f}, vsini={vsini:.1f} km/s -> {total_obs_duration:.2f} s")
         else:
             print(f"Warning: Could not calculate observation time for HD {hd}. Skipping.")
 
@@ -1129,6 +1167,7 @@ if __name__ == "__main__":
     final_vmag_dict = {}
     final_vsini_dict = {}
     final_dec_dict = {}
+    final_chaplin_dict = {}
 
     for star_input in user_stars_input:
         profile = get_star_profile(star_input, hwo_fallback_data)
@@ -1139,6 +1178,7 @@ if __name__ == "__main__":
             final_vmag_dict[hd] = profile['vmag']
             final_vsini_dict[hd] = profile['vsini']
             final_dec_dict[hd] = profile['dec']
+            final_chaplin_dict[hd] = profile.get('chaplin_exptime')
 
     selected_stars, exposure_times, max_uniform_visits_calculated = \
         calculate_exposures_and_uniform_visits(
@@ -1148,7 +1188,9 @@ if __name__ == "__main__":
             final_vsini_dict,
             exposure_time_calculator,
             target_nights_for_uniformity,
-            hours_per_night
+            hours_per_night,
+            chaplin_exptime_dict=final_chaplin_dict,
+            apply_chaplin_filter=apply_chaplin_filter,
         )
 
     simulated_observations_data = generate_observing_schedule(
