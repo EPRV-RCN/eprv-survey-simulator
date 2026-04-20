@@ -717,7 +717,7 @@ def generate_observing_schedule(selected_stars, exposure_times, dec_dict, weathe
                 observations_count[hd] += 1
 
     if verbose:
-        print(f"\n  Results ({observatory_location}):")
+        print(f"\n  Results:")
         total = 0
         for hd, obs_list in star_observations.items():
             print(f"    HD {hd}: {len(obs_list)} observations")
