@@ -109,7 +109,7 @@ INSTRUMENT_CONFIG = {
     "NEID": {
         "etc":              None,   # set after functions are defined
         "observatory":      "kitt peak",
-        "weather_file":     os.path.join(script_dir, "KPNO.txt"),
+        "weather_file":     os.path.join(script_dir, "weather data", "KPNO.txt"),
         "rv_precision_ms":  0.5,
         "acquisition_sec":  NEID_ACQUISITION_SEC,
         "readout_sec":      NEID_READOUT_SEC,
@@ -117,7 +117,7 @@ INSTRUMENT_CONFIG = {
     "KPF": {
         "etc":              None,   # set after functions are defined
         "observatory":      "keck",
-        "weather_file":     os.path.join(script_dir, "Maunakea.txt"),
+        "weather_file":     os.path.join(script_dir, "weather data", "Maunakea.txt"),
         "rv_precision_ms":  0.5,
         "acquisition_sec":  KPF_ACQUISITION_SEC,
         "readout_sec":      KPF_READOUT_SEC,
