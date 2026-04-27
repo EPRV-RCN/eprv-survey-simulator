@@ -1,3 +1,5 @@
 .DS_Store
 JUST_TIMESTAMPS.txt
 output_timestamps
+.ipynb_checkpoints/
+__pycache__/
